@@ -13,6 +13,7 @@ pnpm test                 # 跑单元测试（17 个）
 pnpm typecheck            # 类型检查
 pnpm simulate             # 数值平衡模拟：6 种决策风格 × 200 局
 pnpm simulate -- --games 1000   # 加大样本量
+pnpm preflight            # 推送前自检：代码健康 + GitHub 连通性 + 有没有忘了推
 ```
 
 ## 架构：为什么这样分层
@@ -218,3 +219,13 @@ const engine = new GameEngine(GAME_DATA, { seed: 42 })
    进程会卡在 top-level await（退出码 13）。异步迭代器会给出 `done`。
 4. **行动文案不要手写数值** —— 改了 `effects` 却忘了改描述就会不同步。
    改用 `describeEffects(action.effects)` 自动生成。
+5. **npm script 名会被包管理器内置命令遮蔽** —— 我最初把自检脚本命名为
+   `pnpm doctor`，结果跑的是 **pnpm 自己的 `doctor`**，不是我的脚本。
+   必须 `pnpm run doctor` 才能跑到脚本，所以改名叫 `preflight`。
+6. **`.ps1` 脚本里有中文就必须存成带 BOM 的 UTF-8** ——
+   Windows PowerShell 5.1 读取无 BOM 的 UTF-8 脚本会按 GBK 解码，
+   所有中文变乱码。而 `.npmrc` / `.gitignore` 这类**配置文件反过来要保持纯 ASCII**，
+   因为它们的读取方不一定按 UTF-8 解码。规则是：**脚本可以带 BOM，配置必须纯 ASCII。**
+7. **临时文件要在 `git add` 之前就忽略掉** —— 我用 `.tmp-commit-msg.txt` 写长提交信息，
+   先 `git add -A` 才删除它，结果它被提交并推到了公网仓库，只能再补一个清理 commit。
+   现在 `.gitignore` 里有 `.tmp-*` 和 `*.tmp`。
