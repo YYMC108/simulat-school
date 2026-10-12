@@ -1,9 +1,9 @@
-﻿{
+{
   "name": "campus-life",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "澶у鐢熸椿妯℃嫙鍣?鈥斺€?鏁版嵁椹卞姩鐨勬枃瀛楀吇鎴愭父鎴忓紩鎿?,
+  "description": "大学生活模拟器 —— 数据驱动的文字养成游戏引擎",
   "scripts": {
     "play": "tsx src/cli/play.ts",
     "simulate": "tsx src/cli/simulate.ts",
