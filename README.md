@@ -17,6 +17,7 @@ pnpm test                 # 跑单元测试（33 个，含界面渲染）
 pnpm typecheck            # 类型检查
 pnpm simulate             # 数值平衡模拟：6 种决策风格 × 200 局
 pnpm simulate -- --games 1000   # 加大样本量
+pnpm measure:layout       # 布局回归检查（需先跑 dev:web；加 -- --shots 出截图）
 pnpm preflight            # 推送前自检：代码健康 + 架构边界 + GitHub 连通性
 ```
 

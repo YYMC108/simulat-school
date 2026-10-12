@@ -9,3 +9,6 @@ coverage/
 # 本地临时文件（例如用来写长提交信息的 .tmp-commit-msg.txt）
 .tmp-*
 *.tmp
+
+# pnpm measure:layout --shots 生成的截图（用来看排版，不该进仓库）
+shots/

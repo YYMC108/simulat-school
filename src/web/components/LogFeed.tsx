@@ -24,6 +24,14 @@ export function LogFeed({ feed }: { feed: LogEntry[] }) {
 
   return (
     <section className="feed" aria-label="事件记录" ref={boxRef}>
+      {/* 开局日志只有一条时，上方会空出一片。
+          与其留白，不如用它告诉第一次玩的人这游戏怎么玩 —— 空白变成引导。
+          刻意压成**一行**：两行在小屏（360×740）上会超出日志区，第一行被裁掉。
+          与其去抠内边距和行高，不如把文案写短。 */}
+      {feed.length <= 1 && (
+        <p className="feed-hint">选你想做的事 —— 每周 3 次行动，用完就进入下一周。</p>
+      )}
+
       {feed.map((entry, index) => (
         <article className={`log log-${entry.kind}`} key={index}>
           <p className="log-text">{entry.text}</p>

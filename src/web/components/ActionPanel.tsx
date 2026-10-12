@@ -28,9 +28,14 @@ export function ActionPanel({
         {actions.map((action) => (
           <li key={action.id}>
             <button type="button" className="option" onClick={() => onAct(action.id)}>
-              <span className="option-label">{action.label}</span>
+              {/* 标签和预告同一行、描述另起一行 —— 每个选项压在 2 行。
+                  3 行会让 6 个行动超出手机屏幕，逼玩家在面板里滚动找选项，
+                  而「选行动」是核心操作，不该藏起来。 */}
+              <span className="option-head">
+                <span className="option-label">{action.label}</span>
+                <span className="option-preview">{describeEffects(action.effects)}</span>
+              </span>
               <span className="option-desc">{action.description}</span>
-              <span className="option-preview">{describeEffects(action.effects)}</span>
             </button>
           </li>
         ))}

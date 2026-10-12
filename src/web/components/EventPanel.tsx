@@ -37,8 +37,10 @@ export function EventPanel({
               disabled={!view.enabled}
               onClick={() => onChoose(index)}
             >
-              <span className="option-label">{view.choice.label}</span>
-              {!view.enabled && <span className="option-locked">条件不足</span>}
+              <span className="option-head">
+                <span className="option-label">{view.choice.label}</span>
+                {!view.enabled && <span className="option-locked">条件不足</span>}
+              </span>
             </button>
           </li>
         ))}

@@ -170,14 +170,41 @@ body {
 
 .feed {
   flex: 1 1 auto;
-  /* min-height: 0 是关键：flex 子项默认 min-height:auto，不加这行它不会滚动 */
-  min-height: 0;
+  /* min-height: 0 是关键：flex 子项默认 min-height:auto，不加这行它不会滚动。
+     再给一个下限，避免被下方面板挤成一条缝。 */
+  min-height: 72px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 12px 2px;
+  /* 内边距压到 8：加上下面那行 line-height，能让开局的引导文字刚好完整显示 ——
+     这两处是上面那个「220px」预算里日志区 72px 下限的来源 */
+  padding: 8px 2px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* 日志从底部往上长（像聊天记录）：开局内容很少时，
+   空白留在上方而不是中间一个大洞，看起来才是有意为之。
+   内容超出时 auto 外边距自然变成 0，滚动行为不受影响。
+
+   用 `.feed > :first-child` 而不是 `.log:first-child`：
+   开局第一个子元素是引导文字而不是日志，用前者两种情况都覆盖。 */
+.feed > :first-child {
+  margin-top: auto;
+}
+
+/* 开局的引导文字，占住那片本来会空着的区域 */
+.feed-hint {
+  /* 左右 auto 配合 max-width 做水平居中 */
+  margin-left: auto;
+  margin-right: auto;
+  margin-bottom: 0;
+  padding: 0 4px;
+  max-width: 34em;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-faint);
+  text-align: center;
 }
 
 .log {
@@ -273,7 +300,13 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px;
-  max-height: 46dvh;
+  /* 面板的上限不该是拍脑袋的百分比，而应该由「固定部分」推导出来：
+       顶栏 49 + 属性面板 88 + 日志区下限 72 + 底部留白 10 ≈ 220
+     这样既保证 6 个行动能完整显示（小屏 360×740 下需要 465px，
+     100dvh − 220 = 520 > 465 ✓），又保证极端情况下（比如事件选项特别多）
+     面板会自己内部滚动，而不会把整个页面顶出屏幕。
+     之前用 62dvh 就是被这个硬上限卡住的：740 × 62% = 459 < 465。 */
+  max-height: calc(100dvh - 220px);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -315,11 +348,11 @@ body {
 
 .option {
   width: 100%;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 2px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   text-align: left;
-  padding: 9px 12px;
+  padding: 7px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
@@ -330,6 +363,17 @@ body {
     border-color 140ms ease,
     background 140ms ease,
     transform 90ms ease;
+}
+
+/* 标签 + 预告挤在一行：这是把选项从 3 行压到 2 行的关键。
+   允许换行是为了长标签 —— 不让「写自己的项目 / 刷算法题」被从中间断开，
+   而是让预告整体落到第二行（只影响那一个选项）。 */
+.option-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0 10px;
 }
 
 .option:hover:not(:disabled) {
@@ -349,10 +393,10 @@ body {
 .option-label {
   font-size: 14px;
   font-weight: 500;
+  min-width: 0;
 }
 
 .option-desc {
-  grid-column: 1 / -1;
   font-size: 12px;
   color: var(--text-soft);
 }
@@ -360,9 +404,10 @@ body {
 /* 预告用灰色小字：和日志里彩色的「回执」形成层次，
    让玩家一眼分清「说会做什么」和「实际做了什么」 */
 .option-preview {
-  grid-column: 1 / -1;
   font-size: 11px;
   color: var(--text-faint);
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .option-locked {
@@ -485,11 +530,17 @@ body {
 
 /* ---------------- 窄屏 ---------------- */
 
-@media (max-width: 430px) {
+/* 刻意**保持两列**而不是改成单列：手机上垂直空间是最稀缺的资源，
+   单列会让属性面板从 ~100px 涨到 ~157px，直接把行动面板挤出屏幕
+   （实测 360×740 上第 6 个选项会被裁掉 8px）。
+   两列时每个单元格约 168px，条形还有 ~100px，完全够读。 */
+@media (max-width: 340px) {
   .stats {
     grid-template-columns: 1fr;
   }
+}
 
+@media (max-width: 430px) {
   .ending-title {
     font-size: 21px;
   }
