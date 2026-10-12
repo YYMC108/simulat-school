@@ -62,6 +62,49 @@ if ($SkipTests) {
   }
 }
 
+# ---------------------------------------------------------------- 架构边界
+# 把「文档里的规则」变成「机器执行的检查」。规则写在 docs/技术文档.md §1.1，
+# 但如果没人执行就会慢慢失效 —— 所以这里自动验证。
+Section "架构边界"
+
+# 规则 1：engine 层必须是纯 TypeScript（ADR-001）
+# 注意：只匹配「模块说明符」和「DOM 属性访问」，不要去搜普通单词。
+# 第一版直接搜 'node:|document|window|react'，结果把 state.ts 注释里的
+# 一句「等以后接 React 时」误判成违规 —— 匹配到注释是这类检查的经典假阳性。
+$impure = @()
+$impure += Select-String -Path "src/engine/*.ts" -Pattern "(from\s*['""]|import\s+['""])(node:|react)" -ErrorAction SilentlyContinue
+$impure += Select-String -Path "src/engine/*.ts" -Pattern '\b(document|window)\s*\.' -ErrorAction SilentlyContinue
+if ($impure.Count -gt 0) {
+  Fail "engine 层出现了 DOM / 框架 / Node IO 依赖（违反 ADR-001）："
+  $impure | ForEach-Object { Write-Host "          $($_.Filename):$($_.LineNumber)  $($_.Line.Trim())" -ForegroundColor Red }
+  Info "引擎必须能脱离浏览器和 Node IO 独立运行，否则单测要跑 jsdom、也无法在 Node 里做平衡模拟"
+} else {
+  Pass "engine 层是纯 TypeScript（无 DOM / 框架 / Node IO 依赖）"
+}
+
+# 规则 2：依赖方向单向 —— engine 不得反向引用 data / cli
+$reverse = Select-String -Path "src/engine/*.ts" -Pattern "from\s*['""]\.\./(data|cli)" -ErrorAction SilentlyContinue
+if ($reverse) {
+  Fail "engine 层反向引用了 data / cli（依赖必须单向 engine <- data <- cli）："
+  $reverse | ForEach-Object { Write-Host "          $($_.Filename):$($_.LineNumber)  $($_.Line.Trim())" -ForegroundColor Red }
+} else {
+  Pass "依赖方向正确（engine 不认识 data / cli）"
+}
+
+# 规则 3：BOM 合规 —— .ps1 必须有，其余文本文件必须没有（见技术文档 §8.1）
+$bomBad = @()
+Get-ChildItem -Recurse -File -ErrorAction SilentlyContinue |
+  Where-Object { $_.FullName -notmatch 'node_modules|\\\.git\\' -and $_.Extension -in @('.ts','.json','.md','.yaml','.yml','.npmrc') } |
+  ForEach-Object {
+    $b = [System.IO.File]::ReadAllBytes($_.FullName)
+    if ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) { $bomBad += $_.Name }
+  }
+if ($bomBad.Count -gt 0) {
+  Fail "以下文件不该有 BOM（会让 JSON.parse / pnpm 直接报错）：$($bomBad -join ', ')"
+} else {
+  Pass "BOM 合规（文本配置/代码文件均无 BOM）"
+}
+
 # ---------------------------------------------------------------- GitHub 连接
 Section "GitHub 连接"
 $remoteUrl = (git remote get-url origin 2>&1 | Select-Object -First 1)
