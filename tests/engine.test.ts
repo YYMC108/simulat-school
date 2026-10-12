@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { simulate } from '../src/cli/simulate'
+import { STAT_ORDER, simulate } from '../src/cli/simulate'
 import { GAME_DATA } from '../src/data/index'
 import { GameEngine } from '../src/engine/engine'
 import { evaluate } from '../src/engine/conditions'
 import { applyEffects } from '../src/engine/effects'
 import { mulberry32 } from '../src/engine/rng'
 import { createInitialState } from '../src/engine/state'
-import type { EvalContext, GameState } from '../src/engine/types'
+import type { EvalContext, GameState, StatKey } from '../src/engine/types'
 
 function makeContext(overrides: Partial<GameState> = {}, seed = 1): EvalContext {
   const state = { ...createInitialState(GAME_DATA.config), ...overrides }
@@ -253,7 +253,7 @@ describe('结算回执（实际变化量）', () => {
     expect(ctx.state.stats.mood).toBe(GAME_DATA.config.initialStats.mood + 5)
   })
 
-  it('行动与每周结算都把自己的实际变化量挂在对应日志上', () => {
+  it('行动与每周固定衰减都把自己的实际变化量挂在对应日志上', () => {
     const engine = new GameEngine(GAME_DATA, { seed: 3 })
 
     // ① 行动日志带着这一次行动的实际效果
@@ -268,9 +268,9 @@ describe('结算回执（实际变化量）', () => {
       engine.takeAction('study')
     }
 
-    const settlement = engine.getState().log.find((entry) => entry.text.includes('周结算'))
-    expect(settlement, '应该有一条周结算日志').toBeDefined()
-    expect(settlement!.changes, '周结算必须带上实际变化量').toBeDefined()
+    const settlement = engine.getState().log.find((entry) => entry.text.includes('固定衰减'))
+    expect(settlement, '应该有一条「每周固定衰减」日志').toBeDefined()
+    expect(settlement!.changes, '每周固定衰减必须带上实际变化量').toBeDefined()
 
     // 每周固定支出 100 元；只做自习不花钱，所以是干净的 −100
     expect(settlement!.changes).toEqual(
@@ -280,6 +280,56 @@ describe('结算回执（实际变化量）', () => {
     expect(settlement!.changes).toEqual(
       expect.arrayContaining([expect.objectContaining({ key: 'academic', delta: -1 })]),
     )
+  })
+
+  /**
+   * 回执机制的后置条件：**报告出来的变化量之和，必须等于状态的真实变化**。
+   *
+   * 这条不变量才是「回执可信」的根本保证 —— 它不关心引擎内部怎么算的，
+   * 只要求「你说变了多少」和「实际变了多少」永远一致。
+   *
+   * 它的实战价值：玩家曾经反馈「每周衰减与实际不符」，我先跑这个检查，
+   * 得到 839 次对比 0 处不一致，才确认回执没问题、是文案歧义 ——
+   * 否则我可能会去乱改一份本来正确的代码。
+   */
+  it('回执报告的变化量之和必须等于属性的真实变化', () => {
+    for (const seed of [1, 2, 3, 2025]) {
+      const engine = new GameEngine(GAME_DATA, { seed })
+      let guard = 0
+
+      while (!engine.isEnded() && guard++ < 500) {
+        const before = engine.getState().stats
+
+        let result
+        if (engine.getPending()) {
+          const enabledIndex = engine.getPendingChoices().findIndex((view) => view.enabled)
+          result = engine.choose(enabledIndex === -1 ? 0 : enabledIndex)
+        } else {
+          result = engine.takeAction('study')
+        }
+
+        const after = engine.getState().stats
+
+        // 把这次操作里所有日志报告的变化量加起来
+        const said = new Map<StatKey, number>()
+        for (const log of result.logs) {
+          for (const change of log.changes ?? []) {
+            said.set(change.key, (said.get(change.key) ?? 0) + change.delta)
+          }
+        }
+
+        for (const key of STAT_ORDER) {
+          const reported = said.get(key) ?? 0
+          const actual = after[key] - before[key]
+          expect(
+            reported,
+            `seed=${seed} 第${engine.getState().week}周 ${key}: 回执说 ${reported}，实际变了 ${actual}`,
+          ).toBe(actual)
+        }
+      }
+
+      expect(engine.isEnded(), `seed=${seed} 没走到结局`).toBe(true)
+    }
   })
 })
 

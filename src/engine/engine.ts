@@ -170,10 +170,13 @@ export class GameEngine {
 
   /** 行动力耗尽 → 结算本周 → 抽随机事件 → 决定是否进入下一周 */
   private endWeek(): void {
-    // 每周固定结算单独占一条日志。之前这里是完全静默的 ——
-    // 学业/技能/社交/健康/心情 各 −1 加金钱 −100 全都看不见，
-    // 玩家只会觉得「我明明没做错，属性怎么掉了」。
-    const settlement = pushLog(this.state, 'system', `第 ${this.state.week} 周结算`)
+    // 每周固定衰减单独占一条日志。
+    //
+    // 文案刻意**不叫**「第 N 周结算」：那个说法会被读成「本周总结」，
+    // 但这条只报告固定衰减，不含本周的行动效果（行动效果在自己的行上）。
+    // 玩家拿它去对属性条的实际变化，就会以为数字错了。
+    // 改成「每周固定衰减」，明确它是与行动无关的常量侵蚀。
+    const settlement = pushLog(this.state, 'system', '每周固定衰减')
     const weeklyChanges = applyEffects(this.createContext(), this.data.config.weeklyEffects)
     if (weeklyChanges.length > 0) settlement.changes = weeklyChanges
 
