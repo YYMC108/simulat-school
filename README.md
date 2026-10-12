@@ -229,3 +229,38 @@ const engine = new GameEngine(GAME_DATA, { seed: 42 })
 7. **临时文件要在 `git add` 之前就忽略掉** —— 我用 `.tmp-commit-msg.txt` 写长提交信息，
    先 `git add -A` 才删除它，结果它被提交并推到了公网仓库，只能再补一个清理 commit。
    现在 `.gitignore` 里有 `.tmp-*` 和 `*.tmp`。
+8. **⚠️ Windows PowerShell 5.1 下不要用 `Get-Content` / `Set-Content` 往返处理 UTF-8 文件**
+   —— 这是本项目踩过最严重的一个坑，会造成**静默数据损坏**：
+
+   ```powershell
+   # 危险！这两行合起来会毁掉文件
+   (Get-Content package.json -Raw) -replace 'a','b' | Set-Content package.json -Encoding UTF8
+   ```
+
+   - `Get-Content` 在 PS 5.1 里**默认按系统 ANSI 码页读取**（简中 Windows 上是 GBK），
+     所以 UTF-8 的中文被误解码成乱码字符
+   - `Set-Content -Encoding UTF8` 又把这些乱码字符以 UTF-8 写回，**损坏不可逆**
+   - 而且 `-Encoding UTF8` 会**额外写入 BOM**，导致 `JSON.parse` 直接抛
+     `Unexpected token ''`，`pnpm` 也读不了 `package.json`
+
+   这个坑当时真的把 `package.json` 推到了 GitHub 上，只能从上一个完好提交恢复。
+
+   **正确做法（二选一）**：
+   ```powershell
+   # A. 需要精确控制字节/BOM 时，用 .NET（$false = 不写 BOM）
+   $t = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8)
+   [System.IO.File]::WriteAllText($p, $t, (New-Object System.Text.UTF8Encoding $false))
+
+   # B. 只改文本内容时，直接用编辑器（本项目里就是 edit 工具），别让 shell 参与
+   ```
+
+   **BOM 规则一句话总结**：`.ps1` 脚本里有中文就**必须带 BOM**（否则 PS 5.1 按 GBK 读成乱码）；
+   `.json` / `.npmrc` / `.gitignore` 这类**配置文件必须无 BOM 且纯 ASCII**。
+   本仓库可以随时用这条命令自检：
+   ```powershell
+   Get-ChildItem -Recurse -File | Where-Object { $_.FullName -notmatch 'node_modules|\\\.git\\' } | ForEach-Object {
+     $b = [System.IO.File]::ReadAllBytes($_.FullName)
+     if ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) { $_.Name }
+   }
+   ```
+   正常输出应该**只有 `preflight.ps1`**。
