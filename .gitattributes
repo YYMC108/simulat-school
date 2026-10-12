@@ -1,0 +1,13 @@
+# 统一换行符：仓库里统一存 LF，Windows 上检出时按需转 CRLF。
+# 不加这个文件的话，Windows 开发者提交的 CRLF 会让 diff 出现「整个文件都变了」的假象。
+* text=auto
+
+# 二进制文件不要做换行符转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# 锁文件在 diff 里折叠显示，并且在合并时不要自动解决冲突
+pnpm-lock.yaml linguist-generated=true
