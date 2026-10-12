@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+﻿import { describe, expect, it } from 'vitest'
 
 import { simulate } from '../src/cli/simulate'
 import { GAME_DATA } from '../src/data/index'
@@ -216,6 +216,53 @@ describe('内容数据合法性', () => {
     for (const event of GAME_DATA.events) {
       expect(event.title, event.id).toBeTruthy()
       expect(event.text, event.id).toBeTruthy()
+    }
+  })
+
+  /**
+   * 防卡死：如果某个事件的**每一个**选项都带条件，一旦条件全不满足，
+   * 玩家就永远无法推进（引擎会冻结时间，等一个不存在的合法选择）。
+   *
+   * 当前数据是安全的，但这份安全性只来自「写事件时恰好留了退路」。
+   * 写这条测试是为了让规则的违反者在 `pnpm test` 阶段就暴露，
+   * 而不是等玩家真的卡在某个事件上。
+   */
+  it('每个带选项的事件都至少有一个「无条件选项」，保证玩家不会卡死', () => {
+    const stuck = GAME_DATA.events
+      .filter((event) => (event.choices?.length ?? 0) > 0)
+      .filter((event) => event.choices!.every((choice) => choice.requires !== undefined))
+      .map((event) => event.id)
+
+    expect(
+      stuck,
+      `以下事件的全部选项都带条件，条件全不满足时玩家会卡死：${stuck.join(', ')}`,
+    ).toEqual([])
+  })
+
+  it('实战中不会出现「有待处理事件但一个选项都点不了」的状态', () => {
+    for (const seed of [1, 2, 3, 100, 2025]) {
+      const engine = new GameEngine(GAME_DATA, { seed })
+      const rng = mulberry32(seed)
+      let guard = 0
+
+      while (!engine.isEnded() && guard++ < 5000) {
+        const pending = engine.getPending()
+        if (pending) {
+          const views = engine.getPendingChoices()
+          const usableIndexes = views
+            .map((view, index) => ({ view, index }))
+            .filter((item) => item.view.enabled)
+            .map((item) => item.index)
+
+          expect(usableIndexes.length, `seed=${seed} 事件 ${pending.id} 没有任何可用选项`).toBeGreaterThan(0)
+
+          const pick = usableIndexes[Math.floor(rng() * usableIndexes.length)]!
+          engine.choose(pick)
+          continue
+        }
+        engine.takeAction('rest')
+      }
+      expect(engine.isEnded(), `seed=${seed} 没走到结局`).toBe(true)
     }
   })
 

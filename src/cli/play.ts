@@ -98,13 +98,24 @@ async function askIndex(
 
   for (;;) {
     const answer = await readLine(lines, '> ')
-    if (answer === null) return null
+    if (answer === null) return null // EOF，交给调用方优雅退出
 
-    const index = Number.parseInt(answer.trim(), 10) - 1
-    if (Number.isInteger(index) && index >= 0 && index < labels.length && enabled[index]) {
-      return index
+    const raw = answer.trim()
+    const index = Number.parseInt(raw, 10) - 1
+
+    // 先区分「输入的不是有效序号」和「序号有效但该项不能用」——
+    // 原来两种情况都回「输入无效」，玩家会以为是自己按错了，
+    // 其实是他没钱选那一项。这两件事必须分开提示。
+    if (!Number.isInteger(index) || index < 0 || index >= labels.length) {
+      console.log(`  输入无效：请输入 1 到 ${labels.length} 之间的序号。`)
+      continue
     }
-    console.log('  输入无效，请输入前面列出的序号。')
+    if (!enabled[index]) {
+      console.log(`  第 ${index + 1} 项当前条件不足（后面标了 [条件不足]），请换一项。`)
+      continue
+    }
+
+    return index
   }
 }
 
@@ -119,6 +130,15 @@ async function main(): Promise<void> {
   const engine = new GameEngine(GAME_DATA)
 
   console.log('\n🎓 大学生活模拟器 —— 命令行版')
+  console.log('─'.repeat(52))
+  console.log('你是计算机专业大三学生。本学期 16 周，每周 3 点行动力，')
+  console.log('也就是一共只有 48 次「认真做一件事」的机会。')
+  console.log('')
+  console.log('六项属性互相牵制，你不可能全都拿到 —— 必须做取舍。')
+  console.log('每周用完行动力后会结算，并可能触发一个事件让你做选择。')
+  console.log('')
+  console.log('怎么玩：输入选项前面的数字，按回车。')
+  console.log('─'.repeat(52))
   console.log(`随机种子: ${engine.getSeed()}（记住它就能复现这一局）`)
 
   try {
