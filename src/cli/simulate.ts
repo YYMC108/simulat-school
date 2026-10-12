@@ -21,12 +21,12 @@ import process from 'node:process'
 
 import { GAME_DATA } from '../data/index'
 import { GameEngine } from '../engine/engine'
-import { STAT_LABELS } from '../engine/effects'
+import { STAT_LABELS, STAT_ORDER } from '../engine/effects'
 import { mulberry32, pickOne, pickWeighted } from '../engine/rng'
 import { padEndWidth, padStartWidth } from './text'
-import type { StatKey, Stats } from '../engine/types'
+import type { Stats } from '../engine/types'
 
-export const STAT_ORDER: StatKey[] = ['academic', 'social', 'health', 'mood', 'money', 'skill']
+// STAT_ORDER 现在从 engine/effects 统一导出（CLI 和 Web 共用一份顺序）
 
 /**
  * 决策风格：给每个行动一个偏好权重（没列出的默认 1，填 0 表示不会主动选）。

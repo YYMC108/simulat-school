@@ -1,0 +1,504 @@
+/* ============================================================
+ * 大学生活模拟器 —— 界面样式
+ *
+ * 设计约束：零美术资源。所以「好看」只能来自排版、留白和状态反馈 ——
+ * 这对文字游戏其实是最有效的路径（比立绘影响更大）。
+ *
+ * 布局是「移动优先的单列 + 三段式」：
+ *   顶部状态栏（固定） / 中间日志流（滚动） / 底部操作区（固定）
+ * 这是文字游戏最顺手的形状：历史往上翻，操作永远在拇指够得到的地方。
+ * ========================================================== */
+
+:root {
+  --bg: #f7f5f0;
+  --surface: #ffffff;
+  --surface-soft: #f1eee7;
+  --border: #e3ded3;
+  --text: #241f19;
+  --text-soft: #6b6155;
+  --text-faint: #9a9083;
+  --accent: #2f6b52;
+  --accent-soft: #e6f0ea;
+  --up: #2f7d4f;
+  --down: #b0453a;
+  --flat: #9a9083;
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100%;
+}
+
+/* ---------------- 骨架 ---------------- */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  /* dvh 而不是 vh：手机上浏览器地址栏收缩时 vh 会导致底部被裁掉 */
+  height: 100dvh;
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 0 12px;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 4px;
+  flex: 0 0 auto;
+}
+
+.topbar-week {
+  font-size: 14px;
+  color: var(--text-soft);
+}
+
+.topbar-week strong {
+  font-size: 17px;
+  color: var(--text);
+}
+
+.topbar-ap {
+  display: flex;
+  gap: 4px;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--border);
+  display: inline-block;
+}
+
+.dot.on {
+  background: var(--accent);
+}
+
+.topbar-seed {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- 属性面板 ---------------- */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 14px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  flex: 0 0 auto;
+}
+
+.stat {
+  display: grid;
+  grid-template-columns: auto minmax(28px, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.stat-bar {
+  height: 6px;
+  background: var(--surface-soft);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.stat-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 220ms ease-out;
+}
+
+/* 低值警示：这一条信息比颜色装饰重要 —— 玩家需要尽早发现快崩了 */
+.stat-bar-fill.is-low {
+  background: var(--down);
+}
+
+.stat-value {
+  font-size: 12px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  min-width: 2ch;
+  text-align: right;
+}
+
+.stat-money {
+  grid-column: 2 / span 2;
+  font-size: 12px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ---------------- 日志流 ---------------- */
+
+.feed {
+  flex: 1 1 auto;
+  /* min-height: 0 是关键：flex 子项默认 min-height:auto，不加这行它不会滚动 */
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.log {
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+}
+
+.log-text {
+  margin: 0;
+  font-size: 14px;
+}
+
+.log-action {
+  border-left-color: var(--accent);
+}
+
+.log-event {
+  border-left-color: #c08a2e;
+  background: #fffdf7;
+}
+
+.log-system {
+  background: transparent;
+  border-color: transparent;
+  border-left-color: var(--border);
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.log-ending {
+  border-left-color: var(--accent);
+}
+
+/* ---------------- 结算回执 ---------------- */
+
+.changes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.change {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.change-label {
+  color: var(--text-faint);
+}
+
+.change-delta {
+  font-weight: 600;
+}
+
+.change-up .change-delta {
+  color: var(--up);
+}
+
+.change-down .change-delta {
+  color: var(--down);
+}
+
+.change-flat .change-delta {
+  color: var(--flat);
+}
+
+.change-cap {
+  font-size: 10px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+/* ---------------- 底部操作区 ---------------- */
+
+.bottom {
+  flex: 0 0 auto;
+  padding-bottom: 10px;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  max-height: 46dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.panel-event {
+  border-color: #e8d9b0;
+  background: #fffdf7;
+}
+
+.panel-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.panel-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+.panel-text {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--text-soft);
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.option {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  text-align: left;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 90ms ease;
+}
+
+.option:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.option:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.option-label {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.option-desc {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+/* 预告用灰色小字：和日志里彩色的「回执」形成层次，
+   让玩家一眼分清「说会做什么」和「实际做了什么」 */
+.option-preview {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.option-locked {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* ---------------- 按钮 ---------------- */
+
+.button-primary,
+.button-ghost {
+  font: inherit;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 9px 16px;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.button-primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.button-primary:hover {
+  background: #275a45;
+}
+
+.button-ghost {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-soft);
+}
+
+.button-ghost:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.button-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* ---------------- 结局页 ---------------- */
+
+.ending {
+  position: fixed;
+  inset: 0;
+  background: rgba(36, 31, 25, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+  z-index: 10;
+}
+
+.ending-card {
+  width: 100%;
+  max-width: 460px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 22px 20px;
+  box-shadow: 0 12px 40px rgba(36, 31, 25, 0.25);
+}
+
+.ending-kicker {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.ending-title {
+  margin: 4px 0 12px;
+  font-size: 24px;
+  letter-spacing: 0.02em;
+}
+
+.ending-text {
+  margin: 0 0 18px;
+  color: var(--text-soft);
+}
+
+.ending-subtitle {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+}
+
+.ending-card .stats {
+  border: none;
+  background: var(--surface-soft);
+}
+
+.ending-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.ending-note {
+  margin: 16px 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.7;
+}
+
+.ending-note code {
+  background: var(--surface-soft);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+/* ---------------- 窄屏 ---------------- */
+
+@media (max-width: 430px) {
+  .stats {
+    grid-template-columns: 1fr;
+  }
+
+  .ending-title {
+    font-size: 21px;
+  }
+}
+
+/* 尊重系统的「减少动态效果」偏好 */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

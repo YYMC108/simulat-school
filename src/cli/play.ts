@@ -24,11 +24,9 @@ import process from 'node:process'
 
 import { GAME_DATA } from '../data/index'
 import { GameEngine } from '../engine/engine'
-import { STAT_LABELS, describeEffects } from '../engine/effects'
+import { STAT_LABELS, STAT_ORDER, describeEffects } from '../engine/effects'
 import type { LogEntry, StatChange, StatKey } from '../engine/types'
 import { createColors, detectColorSupport, displayWidth } from './text'
-
-const STAT_ORDER: StatKey[] = ['academic', 'social', 'health', 'mood', 'money', 'skill']
 
 const c = createColors(detectColorSupport())
 

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { STAT_ORDER, simulate } from '../src/cli/simulate'
+import { simulate } from '../src/cli/simulate'
 import { GAME_DATA } from '../src/data/index'
 import { GameEngine } from '../src/engine/engine'
 import { evaluate } from '../src/engine/conditions'
-import { applyEffects } from '../src/engine/effects'
+import { STAT_ORDER, applyEffects } from '../src/engine/effects'
 import { mulberry32 } from '../src/engine/rng'
 import { createInitialState } from '../src/engine/state'
 import type { EvalContext, GameState, StatKey } from '../src/engine/types'

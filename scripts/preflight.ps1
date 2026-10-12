@@ -82,13 +82,13 @@ if ($impure.Count -gt 0) {
   Pass "engine 层是纯 TypeScript（无 DOM / 框架 / Node IO 依赖）"
 }
 
-# 规则 2：依赖方向单向 —— engine 不得反向引用 data / cli
-$reverse = Select-String -Path "src/engine/*.ts" -Pattern "from\s*['""]\.\./(data|cli)" -ErrorAction SilentlyContinue
+# 规则 2：依赖方向单向 —— engine 不得反向引用 data / cli / web
+$reverse = Select-String -Path "src/engine/*.ts" -Pattern "from\s*['""]\.\./(data|cli|web)" -ErrorAction SilentlyContinue
 if ($reverse) {
-  Fail "engine 层反向引用了 data / cli（依赖必须单向 engine <- data <- cli）："
+  Fail "engine 层反向引用了 data / cli / web（依赖必须单向 engine <- data <- cli/web）："
   $reverse | ForEach-Object { Write-Host "          $($_.Filename):$($_.LineNumber)  $($_.Line.Trim())" -ForegroundColor Red }
 } else {
-  Pass "依赖方向正确（engine 不认识 data / cli）"
+  Pass "依赖方向正确（engine 不认识 data / cli / web）"
 }
 
 # 规则 3：BOM 合规 —— .ps1 必须有，其余文本文件必须没有（见技术文档 §8.1）

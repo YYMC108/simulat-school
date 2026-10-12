@@ -138,3 +138,19 @@ export const STAT_LABELS: Record<StatKey, string> = {
   money: '金钱',
   skill: '技能',
 }
+
+/**
+ * 展示顺序（CLI 和 Web 共用）。
+ *
+ * 放在这里而不是各层自己写一份：`STAT_LABELS` 已经在这个文件里了，
+ * 而且「属性按什么顺序显示」是全局唯一的选择 —— 多处各写一份必然漂移。
+ * （严格说这是表现层的关注点，但让引擎反向依赖 UI 更糟。）
+ */
+export const STAT_ORDER: StatKey[] = [
+  'academic',
+  'social',
+  'health',
+  'mood',
+  'money',
+  'skill',
+]
