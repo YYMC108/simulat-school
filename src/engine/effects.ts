@@ -1,30 +1,75 @@
 import { evaluate } from './conditions'
 import { pickWeighted } from './rng'
 import { pushLog } from './state'
-import type { Effect, EvalContext, StatKey } from './types'
+import type { Effect, EvalContext, StatChange, StatKey } from './types'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-/**
- * 应用一组效果。注意：会直接修改 ctx.state（引擎内部的写法），
- * 对外则通过 getState() 返回副本。
- */
-export function applyEffects(ctx: EvalContext, effects: readonly Effect[]): void {
-  for (const effect of effects) {
-    applyEffect(ctx, effect)
+/** 把一次属性变化累加进汇总表（同一次结算里对同一属性的多次变化要合并） */
+function recordChange(
+  changes: Map<StatKey, StatChange>,
+  key: StatKey,
+  delta: number,
+  capped: 'min' | 'max' | null,
+): void {
+  const existing = changes.get(key)
+  if (existing) {
+    existing.delta += delta
+    if (capped !== null) existing.capped = capped
+  } else {
+    changes.set(key, capped === null ? { key, delta } : { key, delta, capped })
   }
 }
 
-function applyEffect(ctx: EvalContext, effect: Effect): void {
+/**
+ * 应用一组效果，**并返回它造成的实际属性变化**。
+ *
+ * 注意返回的是「实际」而不是「声明」：属性触顶时声明的 `+4` 只算 `+2`；
+ * `if` / `branch` 里没走到的分支一点都不算。
+ * UI 用这个显示结算回执，而不是拿效果数组去猜。
+ *
+ * 会直接修改 ctx.state（引擎内部的写法），对外通过 getState() 返回副本。
+ */
+export function applyEffects(ctx: EvalContext, effects: readonly Effect[]): StatChange[] {
+  const changes = new Map<StatKey, StatChange>()
+  applyEffectsInto(ctx, effects, changes)
+
+  // 净变化为 0 且没有触顶的属性不显示，避免「+0」噪声；
+  // 但触顶的 0 变化必须保留 —— 「这次白费了」本身就是最重要的反馈
+  return [...changes.values()].filter(
+    (change) => change.delta !== 0 || change.capped !== undefined,
+  )
+}
+
+/** 内部递归用：把变化累加进调用方传进来的同一张表 */
+function applyEffectsInto(
+  ctx: EvalContext,
+  effects: readonly Effect[],
+  changes: Map<StatKey, StatChange>,
+): void {
+  for (const effect of effects) {
+    applyEffect(ctx, effect, changes)
+  }
+}
+
+function applyEffect(ctx: EvalContext, effect: Effect, changes: Map<StatKey, StatChange>): void {
   const { state, config } = ctx
 
   switch (effect.type) {
     case 'stat': {
       const range = config.statRanges[effect.key]
       const current: number = state.stats[effect.key]
-      state.stats[effect.key] = clamp(current + effect.delta, range.min, range.max)
+      const desired = current + effect.delta
+      const next = clamp(desired, range.min, range.max)
+      state.stats[effect.key] = next
+
+      // 被截断说明撞到了上限或下限，记下来让 UI 能解释「为什么只加了这么点」
+      let capped: 'min' | 'max' | null = null
+      if (next !== desired) capped = desired > next ? 'max' : 'min'
+
+      recordChange(changes, effect.key, next - current, capped)
       break
     }
 
@@ -44,14 +89,14 @@ function applyEffect(ctx: EvalContext, effect: Effect): void {
 
     case 'if':
       if (evaluate(effect.requires, ctx)) {
-        applyEffects(ctx, effect.effects)
+        applyEffectsInto(ctx, effect.effects, changes)
       }
       break
 
     case 'branch': {
       // 权重随机，必定且只命中一个分支
       const picked = pickWeighted(effect.options, (option) => option.weight, ctx.rng)
-      if (picked) applyEffects(ctx, picked.effects)
+      if (picked) applyEffectsInto(ctx, picked.effects, changes)
       break
     }
 

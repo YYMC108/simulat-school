@@ -13,8 +13,17 @@ export function createInitialState(config: GameConfig): GameState {
   }
 }
 
-export function pushLog(state: GameState, kind: LogEntry['kind'], text: string): void {
-  state.log.push({ week: state.week, kind, text })
+/**
+ * 追加一条日志，并把这条日志**返回**给调用方。
+ *
+ * 返回它是为了能在效果结算完之后把实际变化量挂上去（`entry.changes`）：
+ * 日志必须先写（这样效果里的 `log` 才会排在它后面，叙事顺序才对），
+ * 但变化量只有结算完才知道，所以只能「先写日志、后补变化」。
+ */
+export function pushLog(state: GameState, kind: LogEntry['kind'], text: string): LogEntry {
+  const entry: LogEntry = { week: state.week, kind, text }
+  state.log.push(entry)
+  return entry
 }
 
 /**

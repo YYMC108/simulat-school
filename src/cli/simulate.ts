@@ -23,6 +23,7 @@ import { GAME_DATA } from '../data/index'
 import { GameEngine } from '../engine/engine'
 import { STAT_LABELS } from '../engine/effects'
 import { mulberry32, pickOne, pickWeighted } from '../engine/rng'
+import { padEndWidth, padStartWidth } from './text'
 import type { StatKey, Stats } from '../engine/types'
 
 export const STAT_ORDER: StatKey[] = ['academic', 'social', 'health', 'mood', 'money', 'skill']
@@ -125,26 +126,6 @@ export function simulate(gamesPerStrategy: number): SimReport {
 }
 
 /* ---------------- 中英文混排对齐（中文按 2 个字符宽度算） ---------------- */
-
-function displayWidth(text: string): number {
-  let width = 0
-  for (const ch of text) {
-    width += /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(
-      ch,
-    )
-      ? 2
-      : 1
-  }
-  return width
-}
-
-function padEndWidth(text: string, width: number): string {
-  return text + ' '.repeat(Math.max(0, width - displayWidth(text)))
-}
-
-function padStartWidth(text: string, width: number): string {
-  return ' '.repeat(Math.max(0, width - displayWidth(text))) + text
-}
 
 /* ---------------- 渲染 ---------------- */
 

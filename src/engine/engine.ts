@@ -121,8 +121,15 @@ export class GameEngine {
     }
 
     this.state.actionPoints -= action.cost
-    pushLog(this.state, 'action', `〔第${this.state.week}周〕你选择了「${action.label}」`)
-    applyEffects(this.createContext(), action.effects)
+    // 先写日志（这样效果里的 log 会排在它后面，叙事顺序才对），
+    // 结算完再把实际变化量补挂上去
+    const actionEntry = pushLog(
+      this.state,
+      'action',
+      `〔第${this.state.week}周〕你选择了「${action.label}」`,
+    )
+    const actionChanges = applyEffects(this.createContext(), action.effects)
+    if (actionChanges.length > 0) actionEntry.changes = actionChanges
 
     if (this.state.actionPoints <= 0) {
       this.endWeek()
@@ -145,8 +152,9 @@ export class GameEngine {
     }
 
     this.pending = null
-    pushLog(this.state, 'action', `你的选择：${choice.label}`)
-    applyEffects(this.createContext(), choice.effects)
+    const choiceEntry = pushLog(this.state, 'action', `你的选择：${choice.label}`)
+    const choiceChanges = applyEffects(this.createContext(), choice.effects)
+    if (choiceChanges.length > 0) choiceEntry.changes = choiceChanges
 
     // 事件处理完了，才轮到本周结束 / 进入下一周
     this.maybeAdvance()
@@ -162,7 +170,13 @@ export class GameEngine {
 
   /** 行动力耗尽 → 结算本周 → 抽随机事件 → 决定是否进入下一周 */
   private endWeek(): void {
-    applyEffects(this.createContext(), this.data.config.weeklyEffects)
+    // 每周固定结算单独占一条日志。之前这里是完全静默的 ——
+    // 学业/技能/社交/健康/心情 各 −1 加金钱 −100 全都看不见，
+    // 玩家只会觉得「我明明没做错，属性怎么掉了」。
+    const settlement = pushLog(this.state, 'system', `第 ${this.state.week} 周结算`)
+    const weeklyChanges = applyEffects(this.createContext(), this.data.config.weeklyEffects)
+    if (weeklyChanges.length > 0) settlement.changes = weeklyChanges
+
     this.rollWeeklyEvent()
     this.maybeAdvance()
   }
@@ -183,14 +197,16 @@ export class GameEngine {
 
   private triggerEvent(event: GameEvent): void {
     this.state.seenEvents.push(event.id)
-    pushLog(this.state, 'event', `【${event.title}】${event.text}`)
+    const entry = pushLog(this.state, 'event', `【${event.title}】${event.text}`)
 
     if (event.choices && event.choices.length > 0) {
       this.pending = event
       return
     }
 
-    applyEffects(this.createContext(), event.effects ?? [])
+    // 没有选项的事件直接把效果挂在事件这一条日志上
+    const changes = applyEffects(this.createContext(), event.effects ?? [])
+    if (changes.length > 0) entry.changes = changes
   }
 
   /**

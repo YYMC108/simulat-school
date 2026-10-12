@@ -33,6 +33,20 @@ export type StatKey = keyof Stats
 /** 每项属性的取值范围（防止数值溢出到失控） */
 export type StatRange = Record<StatKey, { min: number; max: number }>
 
+/**
+ * 一次结算里某项属性的**实际**变化量。
+ *
+ * 注意这是「回执」，不是「预告」：它记录真正发生的变化，
+ * 而不是效果里声明的意图。两者会不一致 —— 属性触顶时声明 `+4` 而实际只 `+2`，
+ * 这时 `capped: 'max'` 告诉 UI 原因（不要显示成 +4 骗玩家）。
+ */
+export interface StatChange {
+  key: StatKey
+  delta: number
+  /** 被上限/下限截断了：'max' = 已满，'min' = 见底 */
+  capped?: 'min' | 'max'
+}
+
 /* ============================================================
  * 2. Flag 系统
  *    用于记录「发生过什么」：是否加入社团、欠债几次……
@@ -177,6 +191,14 @@ export interface LogEntry {
   week: number
   kind: 'action' | 'event' | 'system' | 'ending'
   text: string
+  /**
+   * 这条日志造成的**实际**属性变化。没有属性变化时该字段不存在。
+   *
+   * 挂在日志上（而不是给 TurnResult 新增一个字段）的好处：
+   * TurnResult 那个「稳定契约」不用改；而且 UI 天然按时间顺序同时拿到
+   * 「发生了什么」和「后果是什么」，不需要自己配对。
+   */
+  changes?: StatChange[]
 }
 
 /** 完整存档状态：一个纯 JSON 对象，可以直接丢进 localStorage */

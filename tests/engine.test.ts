@@ -1,9 +1,10 @@
-﻿import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import { simulate } from '../src/cli/simulate'
 import { GAME_DATA } from '../src/data/index'
 import { GameEngine } from '../src/engine/engine'
 import { evaluate } from '../src/engine/conditions'
+import { applyEffects } from '../src/engine/effects'
 import { mulberry32 } from '../src/engine/rng'
 import { createInitialState } from '../src/engine/state'
 import type { EvalContext, GameState } from '../src/engine/types'
@@ -180,6 +181,105 @@ describe('引擎流程', () => {
     for (const seed of [1, 2, 3, 100, 2025]) {
       expect(play(seed), `seed=${seed}`).toBe(play(seed))
     }
+  })
+})
+
+/* ============================================================
+ * 结算回执：applyEffects 返回的「实际变化量」
+ * ========================================================== */
+describe('结算回执（实际变化量）', () => {
+  it('返回真实变化量；触顶时报告实际值并标记 capped', () => {
+    const ctx = makeContext({
+      stats: { ...GAME_DATA.config.initialStats, academic: 98 },
+    })
+    const changes = applyEffects(ctx, [{ type: 'stat', key: 'academic', delta: 4 }])
+
+    expect(ctx.state.stats.academic).toBe(100) // 被夹到上限
+    // 声明的是 +4，实际只有 +2 —— 回执必须说真话
+    expect(changes).toEqual([{ key: 'academic', delta: 2, capped: 'max' }])
+  })
+
+  it('完全触顶时返回 +0 且保留 capped 标记（重要反馈，不能当噪声过滤掉）', () => {
+    const ctx = makeContext({
+      stats: { ...GAME_DATA.config.initialStats, academic: 100 },
+    })
+    const changes = applyEffects(ctx, [{ type: 'stat', key: 'academic', delta: 4 }])
+    expect(changes).toEqual([{ key: 'academic', delta: 0, capped: 'max' }])
+  })
+
+  it('同一次结算里对同一属性的多次变化汇总成净值', () => {
+    const ctx = makeContext()
+    const changes = applyEffects(ctx, [
+      { type: 'stat', key: 'academic', delta: 4 },
+      { type: 'stat', key: 'academic', delta: -1 },
+    ])
+    expect(changes).toEqual([{ key: 'academic', delta: 3 }])
+  })
+
+  it('净变化为 0 且没触顶的属性不出现（避免 +0 噪声）', () => {
+    const ctx = makeContext()
+    const changes = applyEffects(ctx, [
+      { type: 'stat', key: 'academic', delta: 4 },
+      { type: 'stat', key: 'academic', delta: -4 },
+    ])
+    expect(changes).toEqual([])
+  })
+
+  it('金钱撞到下限时报 capped: min', () => {
+    const ctx = makeContext({
+      stats: { ...GAME_DATA.config.initialStats, money: 50 },
+    })
+    const changes = applyEffects(ctx, [{ type: 'stat', key: 'money', delta: -100 }])
+
+    expect(ctx.state.stats.money).toBe(0)
+    expect(changes).toEqual([{ key: 'money', delta: -50, capped: 'min' }])
+  })
+
+  it('只统计 if 真正命中的分支，没走到的分支一点都不算', () => {
+    const ctx = makeContext({ flags: { 测试开关: true } })
+    const changes = applyEffects(ctx, [
+      {
+        type: 'if',
+        requires: { type: 'flag', key: '测试开关' },
+        effects: [{ type: 'stat', key: 'mood', delta: 5 }],
+      },
+      {
+        type: 'if',
+        requires: { type: 'not', condition: { type: 'flag', key: '测试开关' } },
+        effects: [{ type: 'stat', key: 'mood', delta: -100 }],
+      },
+    ])
+    expect(changes).toEqual([{ key: 'mood', delta: 5 }])
+    expect(ctx.state.stats.mood).toBe(GAME_DATA.config.initialStats.mood + 5)
+  })
+
+  it('行动与每周结算都把自己的实际变化量挂在对应日志上', () => {
+    const engine = new GameEngine(GAME_DATA, { seed: 3 })
+
+    // ① 行动日志带着这一次行动的实际效果
+    const first = engine.takeAction('study')
+    const actionLog = first.logs.find((entry) => entry.kind === 'action')
+    expect(actionLog?.changes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: 'academic', delta: 4 })]),
+    )
+
+    // ② 把本周行动力用完 → 必须出现一条带 changes 的「周结算」日志
+    while (engine.getState().actionPoints > 0 && !engine.getPending() && !engine.isEnded()) {
+      engine.takeAction('study')
+    }
+
+    const settlement = engine.getState().log.find((entry) => entry.text.includes('周结算'))
+    expect(settlement, '应该有一条周结算日志').toBeDefined()
+    expect(settlement!.changes, '周结算必须带上实际变化量').toBeDefined()
+
+    // 每周固定支出 100 元；只做自习不花钱，所以是干净的 −100
+    expect(settlement!.changes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: 'money', delta: -100 })]),
+    )
+    // 每周固定衰减：学业 −1
+    expect(settlement!.changes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: 'academic', delta: -1 })]),
+    )
   })
 })
 

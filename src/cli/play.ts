@@ -25,9 +25,17 @@ import process from 'node:process'
 import { GAME_DATA } from '../data/index'
 import { GameEngine } from '../engine/engine'
 import { STAT_LABELS, describeEffects } from '../engine/effects'
-import type { LogEntry, StatKey } from '../engine/types'
+import type { LogEntry, StatChange, StatKey } from '../engine/types'
+import { createColors, detectColorSupport, displayWidth } from './text'
 
 const STAT_ORDER: StatKey[] = ['academic', 'social', 'health', 'mood', 'money', 'skill']
+
+const c = createColors(detectColorSupport())
+
+/** 结算回执里每个单元格的显示宽度（CJK 感知） */
+const CHANGE_CELL_WIDTH = 14
+/** 每行放几个属性变化 */
+const CHANGES_PER_ROW = 3
 
 /* ---------------- 显示 ---------------- */
 
@@ -61,6 +69,59 @@ function renderState(engine: GameEngine): void {
   console.log('═'.repeat(52))
 }
 
+/**
+ * 把一个属性变化格式化成「+4」/「−2」/「+¥280」这种纯文本。
+ * 用真正的减号 `−`（U+2212）而不是连字符，等宽字体下视觉宽度更均衡。
+ */
+function formatChangeValue(change: StatChange): string {
+  const sign = change.delta > 0 ? '+' : change.delta < 0 ? '−' : '±'
+  const magnitude = Math.abs(change.delta)
+  return change.key === 'money' ? `${sign}¥${magnitude}` : `${sign}${magnitude}`
+}
+
+/**
+ * 打印结算回执 —— 这一周 / 这个选项到底改了什么。
+ *
+ * 这里刻意用的是引擎算出来的**实际**变化量，而不是效果数组里声明的意图：
+ * 属性触顶时声明 `+4` 实际只有 `+2`，显示后者才是真话。
+ */
+function printChanges(changes: StatChange[] | undefined): void {
+  if (!changes || changes.length === 0) return
+
+  const cells = changes.map((change) => {
+    const label = STAT_LABELS[change.key]
+    const value = formatChangeValue(change)
+    const colorize =
+      change.delta > 0 ? c.green : change.delta < 0 ? c.red : c.dim
+    return {
+      plain: `${label} ${value}`,
+      colored: `${label} ${colorize(value)}`,
+    }
+  })
+
+  // 先按「纯文本宽度」补空格，再拼上带颜色的版本，
+  // 否则颜色转义序列会被算进宽度导致错位
+  for (let i = 0; i < cells.length; i += CHANGES_PER_ROW) {
+    let line = '    '
+    for (const cell of cells.slice(i, i + CHANGES_PER_ROW)) {
+      line += cell.colored + ' '.repeat(Math.max(0, CHANGE_CELL_WIDTH - displayWidth(cell.plain)))
+    }
+    console.log(line.trimEnd())
+  }
+
+  // 触顶/见底的解释单独一行，避免把单元格撑得过宽。
+  // 措辞要区分两种情况：完全没生效（+0）和只是被截断（+3 而不是 +4）。
+  const notes = changes
+    .filter((change) => change.capped !== undefined)
+    .map((change) => {
+      const label = `${STAT_LABELS[change.key]}${change.capped === 'max' ? '已满' : '见底'}`
+      return change.delta === 0 ? `${label}，本次没有生效` : label
+    })
+  if (notes.length > 0) {
+    console.log(c.dim(`    （${notes.join('；')}）`))
+  }
+}
+
 function printLogs(logs: LogEntry[]): void {
   for (const entry of logs) {
     const prefix =
@@ -72,6 +133,7 @@ function printLogs(logs: LogEntry[]): void {
             ? '▸'
             : '·'
     console.log(`${prefix} ${entry.text}`)
+    printChanges(entry.changes)
   }
 }
 
@@ -121,13 +183,34 @@ async function askIndex(
 
 /* ---------------- 主流程 ---------------- */
 
+/**
+ * 输入流结束时必须**说出来**。
+ *
+ * 之前这里是静默 `return`：如果 stdin 提前结束（重定向的输入用完了、
+ * 终端断了、或者管道被关闭），程序会直接退出、什么都不打印，
+ * 玩家会以为游戏崩了 —— 其实只是没输入了。
+ */
+function announceEof(engine: GameEngine): void {
+  const state = engine.getState()
+  console.log('')
+  console.log(c.yellow(`输入已结束，这一局没有玩完（停在第 ${state.week} 周）。`))
+  console.log(c.dim(`想重来这一局：pnpm play -- --seed ${engine.getSeed()}`))
+}
+
 async function main(): Promise<void> {
   // 不传 output：让终端保持 cooked 模式，由终端负责回显和退格，
   // 我们自己写提示符。这样在真实终端和重定向输入下行为一致。
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity })
   const lines = rl[Symbol.asyncIterator]()
 
-  const engine = new GameEngine(GAME_DATA)
+  // 支持 --seed N：CLI 一直在打印种子并说「记住它就能复现这一局」，
+  // 但之前根本没办法把种子传回来 —— 这个承诺是空的。补上。
+  const seedFlagIndex = process.argv.indexOf('--seed')
+  const parsedSeed = Number.parseInt(process.argv[seedFlagIndex + 1] ?? '', 10)
+  const engine = new GameEngine(
+    GAME_DATA,
+    Number.isInteger(parsedSeed) ? { seed: parsedSeed } : {},
+  )
 
   console.log('\n🎓 大学生活模拟器 —— 命令行版')
   console.log('─'.repeat(52))
@@ -138,8 +221,9 @@ async function main(): Promise<void> {
   console.log('每周用完行动力后会结算，并可能触发一个事件让你做选择。')
   console.log('')
   console.log('怎么玩：输入选项前面的数字，按回车。')
+  console.log('复现某局：pnpm play -- --seed <种子>')
   console.log('─'.repeat(52))
-  console.log(`随机种子: ${engine.getSeed()}（记住它就能复现这一局）`)
+  console.log(`随机种子: ${engine.getSeed()}`)
 
   try {
     while (!engine.isEnded()) {
@@ -155,7 +239,10 @@ async function main(): Promise<void> {
           views.map((view) => view.choice.label),
           views.map((view) => view.enabled),
         )
-        if (index === null) return
+        if (index === null) {
+          announceEof(engine)
+          return
+        }
         printLogs(engine.choose(index).logs)
         continue
       }
@@ -166,11 +253,16 @@ async function main(): Promise<void> {
         lines,
         actions.map(
           (action) =>
-            `${action.label}  ${action.description}\n       ${describeEffects(action.effects)}`,
+            // 预告用灰色、回执用彩色：玩家一眼能分清
+            // 「这个选项说它会做什么」和「它实际做了什么」
+            `${action.label}  ${action.description}\n       ${c.dim(describeEffects(action.effects))}`,
         ),
         actions.map(() => true),
       )
-      if (index === null) return
+      if (index === null) {
+        announceEof(engine)
+        return
+      }
       printLogs(engine.takeAction(actions[index]!.id).logs)
     }
 
