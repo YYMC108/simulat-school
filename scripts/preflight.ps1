@@ -1,7 +1,7 @@
 ﻿# 推送前自检 —— 一条命令确认「代码没问题 + 能连上 GitHub + 没有忘记推的东西」
 #
-#   pnpm doctor
-#   pnpm doctor -- -SkipTests     跳过 typecheck 和单测（只想查网络时用）
+#   pnpm preflight
+#   pnpm preflight -- -SkipTests     跳过 typecheck 和单测（只想查网络时用）
 #
 # 加这条脚本的实际原因：这台机器到 github.com 的连接是间歇性的。
 # 以前推一次代码可能失败好几次才发现是网络问题。先跑一次自检，
