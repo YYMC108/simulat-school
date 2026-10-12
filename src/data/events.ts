@@ -1205,4 +1205,174 @@ export const EVENTS: GameEvent[] = [
       { type: 'log', text: '你当上了社团骨干。责任重了，但也更有归属感了。' },
     ],
   },
+
+  /* ════════════════ 日常琐事（全程可用，weight 1，稀释池子降低重复度）════════════════
+   * 这一批刻意「无门槛 + weight 1」：它们的职责不是推进剧情，
+   * 而是把有效池撑大，让别的关键事件不再每局必见。
+   * 生活琐事累积可用（不做周次窗口），这正是「累积式门槛」的一部分。 */
+
+  {
+    id: 'ev_lost_card',
+    title: '饭卡丢了',
+    text: '摸遍口袋都没找到饭卡。去补办，窗口前排着长队。',
+    category: 'random',
+    weight: 1,
+    effects: [
+      { type: 'stat', key: 'mood', delta: -3 },
+      { type: 'stat', key: 'money', delta: -50 },
+    ],
+  },
+  {
+    id: 'ev_rainy_day',
+    title: '暴雨没带伞',
+    text: '下课铃响，窗外大雨倾盆。你出门时还是晴天。',
+    category: 'random',
+    weight: 1,
+    effects: [
+      { type: 'stat', key: 'health', delta: -2 },
+      { type: 'stat', key: 'mood', delta: -2 },
+    ],
+  },
+  {
+    id: 'ev_late_for_class',
+    title: '睡过头迟到',
+    text: '闹钟响了七遍，你按掉了七遍。醒来已经第二节课。',
+    category: 'random',
+    weight: 1,
+    repeatable: true,
+    requires: { type: 'week', op: '<=', value: 12 },
+    effects: [
+      { type: 'stat', key: 'academic', delta: -2 },
+      { type: 'stat', key: 'mood', delta: -2 },
+    ],
+  },
+  {
+    id: 'ev_canteen_new',
+    title: '食堂新窗口',
+    text: '食堂开了个新窗口，排队的人拐了两个弯。',
+    category: 'random',
+    weight: 1,
+    effects: [
+      { type: 'stat', key: 'mood', delta: 3 },
+      { type: 'stat', key: 'money', delta: -20 },
+      { type: 'stat', key: 'health', delta: 1 },
+    ],
+  },
+  {
+    id: 'ev_group_project',
+    title: '小组作业队友划水',
+    text: '小组作业，队友在群里只回了个「收到」，之后再也没有动静。',
+    category: 'random',
+    weight: 1,
+    effects: [
+      { type: 'stat', key: 'academic', delta: 3 },
+      { type: 'stat', key: 'social', delta: -3 },
+      { type: 'stat', key: 'mood', delta: -4 },
+    ],
+  },
+  {
+    id: 'ev_school_network_down',
+    title: '全校断网',
+    text: '校园网又崩了。你正要提交的实验报告卡在了 99%。',
+    category: 'random',
+    weight: 1,
+    effects: [
+      { type: 'stat', key: 'skill', delta: -2 },
+      { type: 'stat', key: 'mood', delta: -2 },
+    ],
+  },
+  {
+    id: 'ev_found_money',
+    title: '捡到零钱',
+    text: '在自习室捡到一张钞票，周围没人。你犹豫了一下。',
+    category: 'random',
+    weight: 1,
+    effects: [
+      { type: 'stat', key: 'money', delta: 40 },
+      { type: 'stat', key: 'mood', delta: 2 },
+    ],
+  },
+  {
+    id: 'ev_phone_trouble',
+    title: '手机进水了',
+    text: '水杯翻了，手机屏幕闪了两下黑了。',
+    category: 'random',
+    weight: 1,
+    effects: [
+      { type: 'stat', key: 'mood', delta: -3 },
+      { type: 'stat', key: 'money', delta: -100 },
+    ],
+  },
+  {
+    id: 'ev_procrastinate',
+    title: '拖延症发作',
+    text: '你打开了作业文档，然后刷了三个小时短视频。',
+    category: 'random',
+    weight: 1,
+    repeatable: true,
+    requires: { type: 'week', op: '>=', value: 3 },
+    effects: [
+      { type: 'stat', key: 'academic', delta: -3 },
+      { type: 'stat', key: 'mood', delta: 3 },
+    ],
+  },
+  {
+    id: 'ev_night_talk',
+    title: '宿舍夜聊',
+    text: '熄灯之后不知道谁起了个头，四个人聊到半夜。',
+    category: 'random',
+    weight: 1,
+    repeatable: true,
+    requires: { type: 'week', op: '<=', value: 12 },
+    effects: [
+      { type: 'stat', key: 'social', delta: 4 },
+      { type: 'stat', key: 'mood', delta: 4 },
+      { type: 'stat', key: 'health', delta: -2 },
+    ],
+  },
+  {
+    id: 'ev_weather_cold',
+    title: '降温没带厚衣服',
+    text: '一夜入冬。你的厚衣服还在家里，只能裹着薄外套去上课。',
+    category: 'random',
+    weight: 1,
+    effects: [
+      { type: 'stat', key: 'health', delta: -3 },
+      { type: 'stat', key: 'mood', delta: -1 },
+    ],
+  },
+  {
+    id: 'ev_lecture_inspiration',
+    title: '被一节课点燃',
+    text: '某位老师讲了一个你从没想过的角度，下课后你追着他问了一路。',
+    category: 'random',
+    weight: 1,
+    effects: [
+      { type: 'stat', key: 'academic', delta: 2 },
+      { type: 'stat', key: 'mood', delta: 2 },
+    ],
+  },
+  {
+    id: 'ev_dorm_clean',
+    title: '宿舍大扫除',
+    text: '宿管阿姨来检查卫生。四个人手忙脚乱地收拾了半小时。',
+    category: 'random',
+    weight: 1,
+    effects: [
+      { type: 'stat', key: 'health', delta: 2 },
+      { type: 'stat', key: 'mood', delta: 2 },
+      { type: 'stat', key: 'social', delta: 1 },
+    ],
+  },
+  {
+    id: 'ev_library_quiet',
+    title: '图书馆太吵',
+    text: '邻座一直在敲键盘、讲电话。你换了好几个座位都没能安静下来。',
+    category: 'random',
+    weight: 1,
+    effects: [
+      { type: 'stat', key: 'academic', delta: -1 },
+      { type: 'stat', key: 'mood', delta: -2 },
+    ],
+  },
 ]
