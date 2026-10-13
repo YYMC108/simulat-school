@@ -1508,7 +1508,7 @@ export const EVENTS: GameEvent[] = [
       },
       {
         // 同一件事的「不花钱」版本：一样有效果，但明显更小 ——
-        // 这正是新行动「约同学打球」想表达的那种社交
+        // 这正是新行动「约同学联机打游戏」想表达的那种社交
         label: '只出力不出钱：我来张罗',
         effects: [
           { type: 'stat', key: 'social', delta: 3 },
