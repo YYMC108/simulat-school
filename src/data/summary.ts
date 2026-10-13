@@ -21,8 +21,8 @@ import type { SummaryContent } from '../engine/types'
  *    形成「先讲事、后总结」的阅读节奏。
  */
 export const SUMMARY: SummaryContent = {
-  identity: '计算机专业大三学生',
-
+  // 「你是谁」不在这里 —— 它是专业决定的（见 data/majors.ts）。
+  // 放在这里就会出现「换了专业、结算页还写着旧身份」的二源问题。
   rules: [
     /* ---------------- 社团 ---------------- */
     {

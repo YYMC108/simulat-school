@@ -1,5 +1,6 @@
 import { evaluate } from './conditions'
 import { STAT_ORDER, applyEffects } from './effects'
+import { applyStatBonus, matchesMajor, resolveMajor } from './majors'
 import { mulberry32, pickWeighted, randomSeed } from './rng'
 import { cloneState, createInitialState, pushLog } from './state'
 import type {
@@ -10,6 +11,7 @@ import type {
   GameEvent,
   GameState,
   LogEntry,
+  MajorDef,
   RNG,
   RunSummary,
   StatKey,
@@ -20,6 +22,13 @@ import type {
 export interface NewGameOptions {
   /** 指定随机种子即可复现同一局游戏；不传则随机 */
   seed?: number
+  /**
+   * 专业 id；不传则用 `data.majors` 里的第一个。
+   *
+   * 专业只影响「哪些内容可见」和「开局属性」，完全由数据决定 ——
+   * 引擎这里只是把玩家的选择原样传给数据层。
+   */
+  majorId?: string
 }
 
 export interface ChoiceView {
@@ -41,6 +50,8 @@ export class GameEngine {
   private readonly state: GameState
   private readonly rng: RNG
   private readonly seed: number
+  /** 本局专业（数据里的一条定义，引擎不对它做任何特判） */
+  private readonly major: MajorDef
 
   /** 正在等待玩家做选择的事件 */
   private pending: GameEvent | null = null
@@ -49,12 +60,21 @@ export class GameEngine {
     this.data = data
     this.seed = options.seed ?? randomSeed()
     this.rng = mulberry32(this.seed)
-    this.state = createInitialState(data.config)
+    this.major = resolveMajor(data, options.majorId)
 
+    this.state = createInitialState(
+      data.config,
+      this.major.id,
+      // 基准属性 + 专业偏移，并且夹进合法区间（开局这一帧同样受 I1 约束）
+      applyStatBonus(data.config.initialStats, this.major.statBonus, data.config.statRanges),
+    )
+
+    // 开场白里的「你是谁」来自专业数据。引擎里刻意不留任何一个具体专业名：
+    // 一旦写死「计算机专业大三学生」，「加第 3 个专业只写数据」这句话就假了。
     pushLog(
       this.state,
       'system',
-      `开学了。你是计算机专业大三学生，本学期共 ${data.config.totalWeeks} 周，每周 ${data.config.actionPointsPerWeek} 点行动力。`,
+      `开学了。你是${this.major.identity}，本学期共 ${data.config.totalWeeks} 周，每周 ${data.config.actionPointsPerWeek} 点行动力。`,
     )
   }
 
@@ -62,6 +82,11 @@ export class GameEngine {
 
   getSeed(): number {
     return this.seed
+  }
+
+  /** 本局专业定义（含显示名与身份文案），供界面显示 */
+  getMajor(): MajorDef {
+    return this.major
   }
 
   /** 返回状态副本，外部改不动引擎内部 */
@@ -109,6 +134,9 @@ export class GameEngine {
 
     const lines: SummaryLine[] = this.data.summary.rules
       .map((rule, index) => ({ rule, index }))
+      // 先按专业过滤，再求值条件 —— 顺序不影响结果，但让「这条规则本局根本不存在」
+      // 和「它存在但条件不满足」两件事在代码上一眼可分
+      .filter(({ rule }) => matchesMajor(rule.majors, this.major.id))
       .filter(({ rule }) => evaluate(rule.requires, ctx))
       .map(({ rule, index }) => ({
         kind: rule.kind,
@@ -124,7 +152,7 @@ export class GameEngine {
       .map(({ kind, text }) => ({ kind, text }))
 
     return {
-      identity: this.data.summary.identity,
+      identity: this.major.identity,
       lines,
       stats: { ...this.state.stats },
       endingTitle: this.getEnding()?.title ?? '还没有走到结局',
@@ -156,11 +184,14 @@ export class GameEngine {
     return best
   }
 
-  /** 当前可执行的行动（行动力够 + 条件满足） */
+  /** 当前可执行的行动（本专业可见 + 行动力够 + 条件满足） */
   availableActions(): ActionDef[] {
     const ctx = this.createContext()
     return this.data.actions.filter(
-      (action) => action.cost <= this.state.actionPoints && evaluate(action.requires, ctx),
+      (action) =>
+        matchesMajor(action.majors, this.major.id) &&
+        action.cost <= this.state.actionPoints &&
+        evaluate(action.requires, ctx),
     )
   }
 
@@ -179,6 +210,11 @@ export class GameEngine {
 
     const action = this.data.actions.find((item) => item.id === actionId)
     if (!action) throw new Error(`未知行动: ${actionId}`)
+    // 专业可见性也要在这里挡一道：availableActions() 过滤过，但 takeAction
+    // 是公开 API，不能假设调用方一定先过滤（fail fast 的一致性）
+    if (!matchesMajor(action.majors, this.major.id)) {
+      throw new Error(`行动不属于本专业(${this.major.id}): ${actionId}`)
+    }
     if (action.cost > this.state.actionPoints) throw new Error('行动力不足')
     if (!evaluate(action.requires, this.createContext())) {
       throw new Error(`行动条件不满足: ${actionId}`)
@@ -253,6 +289,7 @@ export class GameEngine {
 
     const ctx = this.createContext()
     const pool = this.data.events.filter((event) => {
+      if (!matchesMajor(event.majors, this.major.id)) return false
       if (event.category !== 'random') return false
       if (!event.repeatable && this.state.seenEvents.includes(event.id)) return false
       return evaluate(event.requires, ctx)
@@ -294,10 +331,13 @@ export class GameEngine {
     pushLog(this.state, 'system', `—— 第 ${this.state.week} 周开始 ——`)
   }
 
-  /** 学期结束，按优先级挑第一个满足条件的结局 */
+  /** 学期结束，按优先级挑第一个满足条件的结局（只在本专业可见的结局里挑） */
   private settleEnding(): void {
     const ctx = this.createContext()
-    const sorted = [...this.data.endings].sort((a, b) => a.priority - b.priority)
+    const sorted = this.data.endings
+      // filter 已经产出了新数组，所以后面的 sort 不会动到 data 里的原顺序
+      .filter((ending) => matchesMajor(ending.majors, this.major.id))
+      .sort((a, b) => a.priority - b.priority)
     const hit = sorted.find((ending) => evaluate(ending.requires, ctx)) ?? null
 
     this.state.endingId = hit ? hit.id : null

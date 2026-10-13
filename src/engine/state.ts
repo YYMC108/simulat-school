@@ -1,15 +1,26 @@
-import type { GameConfig, GameState, LogEntry } from './types'
+import type { GameConfig, GameState, LogEntry, Stats } from './types'
 
-/** 开一个新档 */
-export function createInitialState(config: GameConfig): GameState {
+/**
+ * 开一个新档。
+ *
+ * `initialStats` 由调用方算好传进来（基准属性 + 专业偏移，见 `majors.ts`），
+ * 而不是在这里读 config：这样 state.ts 完全不需要知道「专业」这个概念，
+ * 它只管把一份已经确定的数值装进状态里。
+ */
+export function createInitialState(
+  config: GameConfig,
+  majorId: string,
+  initialStats: Stats,
+): GameState {
   return {
     week: 1,
     actionPoints: config.actionPointsPerWeek,
-    stats: { ...config.initialStats },
+    stats: { ...initialStats },
     flags: {},
     seenEvents: [],
     log: [],
     endingId: null,
+    majorId,
   }
 }
 

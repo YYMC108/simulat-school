@@ -127,8 +127,41 @@ export type Effect =
   | { type: 'end'; endingId: string }
 
 /* ============================================================
- * 5. 内容定义：行动 / 事件 / 结局
+ * 5. 内容定义：专业 / 行动 / 事件 / 结局
  * ========================================================== */
+
+/**
+ * 专业定义 —— 回答「你是谁」。
+ *
+ * 关键设计：专业**不是引擎里的一个分支**，而是内容上的一层可选标签。
+ * 引擎只学会一句话：「凡是被 `majors` 标记过的内容，只有对应专业看得见；
+ * 没标记的，所有专业共享。」除此之外它对专业一无所知 ——
+ * 所以加第 3 个专业只需要写数据，引擎一行都不用改。
+ */
+export interface MajorDef {
+  id: string
+  /** 显示名，如「计算机」 */
+  name: string
+  /** 一句话身份，如「计算机专业大三学生」。开局日志与结算回顾共用这一处 */
+  identity: string
+  /** 开局选择界面上的介绍文案 */
+  description: string
+  /**
+   * 相对 `config.initialStats` 的属性偏移。
+   *
+   * 刻意用「偏移」而不是每个专业重抄一份完整属性：基准数值只留一处，
+   * 调平衡时改基准就能同时作用于所有专业，专业之间的差异也一眼看得清。
+   */
+  statBonus?: Partial<Stats>
+}
+
+/**
+ * 内容归属的专业标签。
+ *
+ * `undefined` = 所有专业共享（绝大多数内容都是这样：宿舍矛盾、下雨、
+ * 生病……这些事跟专业没关系）；写了 = 只有列出的专业能看见。
+ */
+export type MajorTags = string[] | undefined
 
 /** 玩家每周可以执行的行动 */
 export interface ActionDef {
@@ -140,6 +173,8 @@ export interface ActionDef {
   /** 可选条件（不满足则不出现在列表里） */
   requires?: Condition
   effects: Effect[]
+  /** 专属专业；不写 = 全专业共享 */
+  majors?: MajorTags
 }
 
 /** 事件里的一个选项 */
@@ -167,6 +202,8 @@ export interface GameEvent {
   choices?: Choice[]
   effects?: Effect[]
   tags?: string[]
+  /** 专属专业；不写 = 全专业共享 */
+  majors?: MajorTags
 }
 
 export interface Ending {
@@ -176,6 +213,8 @@ export interface Ending {
   /** 判定顺序，数字小的先判 */
   priority: number
   requires: Condition
+  /** 专属专业；不写 = 全专业共享。兜底结局必须共享，否则会有专业没有结局 */
+  majors?: MajorTags
 }
 
 /* ============================================================
@@ -219,6 +258,13 @@ export interface GameState {
   seenEvents: string[]
   log: LogEntry[]
   endingId: string | null
+  /**
+   * 本局所选专业 id。
+   *
+   * 为什么必须存进 state：存档（阶段 2.5）读回来时要能还原「你是谁」——
+   * 专业决定了哪些事件/行动/结局/回顾可见，丢了它这局就还原不了。
+   */
+  majorId: string
 }
 
 /** 一次操作的返回值，UI 只需要看这个 */
@@ -233,6 +279,8 @@ export interface TurnResult {
 /** 一整套游戏内容，由数据层提供，注入给引擎 */
 export interface GameData {
   config: GameConfig
+  /** 可选专业。**至少一个**；不指定 majorId 时用第一个当默认 */
+  majors: MajorDef[]
   actions: ActionDef[]
   events: GameEvent[]
   endings: Ending[]
@@ -279,6 +327,8 @@ export interface SummaryRule {
   countFrom?: string
   /** 同一次结算内的排序，小的在前，默认 0 */
   order?: number
+  /** 专属专业；不写 = 全专业共享 */
+  majors?: MajorTags
 }
 
 export interface SummaryLine {
@@ -309,8 +359,11 @@ export interface RunSummary {
 
 /** 结算回顾的内容（纯数据，由 data 层提供） */
 export interface SummaryContent {
-  /** 一句话身份 */
-  identity: string
+  /**
+   * 注意这里**没有** `identity`：「你是谁」是专业决定的（`MajorDef.identity`），
+   * 而回顾规则是全专业共用的一份。身份留在这里就会出现「专业改了、
+   * 结算页还写着旧专业」的二源问题。
+   */
   rules: SummaryRule[]
   /**
    * 主导属性 → 一句话总评。

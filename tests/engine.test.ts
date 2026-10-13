@@ -1,16 +1,27 @@
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
-import { deadSummaryRules, simulate } from '../src/cli/simulate'
+import { STRATEGIES, deadSummaryRules, playOne, simulate } from '../src/cli/simulate'
 import { GAME_DATA } from '../src/data/index'
 import { GameEngine } from '../src/engine/engine'
 import { evaluate } from '../src/engine/conditions'
 import { STAT_ORDER, applyEffects } from '../src/engine/effects'
 import { mulberry32 } from '../src/engine/rng'
 import { createInitialState } from '../src/engine/state'
-import type { EvalContext, GameState, StatKey } from '../src/engine/types'
+import type { EvalContext, GameData, GameState, MajorDef, StatKey } from '../src/engine/types'
+import { GOLDEN_FINGERPRINT } from './golden-fingerprint'
+
+/** 默认专业 id（不指定 majorId 时引擎用的就是它） */
+const DEFAULT_MAJOR = GAME_DATA.majors[0]!.id
 
 function makeContext(overrides: Partial<GameState> = {}, seed = 1): EvalContext {
-  const state = { ...createInitialState(GAME_DATA.config), ...overrides }
+  const state = {
+    ...createInitialState(GAME_DATA.config, DEFAULT_MAJOR, GAME_DATA.config.initialStats),
+    ...overrides,
+  }
   return { state, config: GAME_DATA.config, rng: mulberry32(seed) }
 }
 
@@ -484,5 +495,312 @@ describe('内容数据合法性', () => {
       deadSummaryRules(report.content.summaryTexts).map((rule) => rule.text),
       '以下回顾规则在所有决策风格下都从未触发，检查条件是否过严（尤其是属性阈值类规则）',
     ).toEqual([])
+  })
+})
+
+/* ============================================================
+ * 专业维度（阶段 2）
+ *
+ * 现在数据里只有计算机一个专业，但下面用一份**合成的双专业数据**
+ * 把过滤逻辑先测掉 —— 这样「加第 3 个专业只需要写数据」这句话
+ * 在写第二个专业之前就已经被验证过了，而不是等写完才发现引擎里有暗礁。
+ * ========================================================== */
+
+const OTHER_MAJOR: MajorDef = {
+  id: 'testart',
+  name: '测试文科',
+  identity: '测试文科专业大三学生',
+  description: '只用于测试的第二个专业',
+  statBonus: { academic: -5, social: 5 },
+}
+
+/** 造一份「两个专业」的数据：第二个专业带行动/事件/结局/回顾各一件专属内容 */
+function dataWithSecondMajor(): GameData {
+  return {
+    ...GAME_DATA,
+    majors: [...GAME_DATA.majors, OTHER_MAJOR],
+    actions: [
+      ...GAME_DATA.actions,
+      {
+        id: 'test_only_action',
+        label: '测试专属行动',
+        description: '只有测试文科能做',
+        cost: 1,
+        effects: [{ type: 'stat', key: 'social', delta: 1 }],
+        majors: [OTHER_MAJOR.id],
+      },
+    ],
+    events: [
+      ...GAME_DATA.events,
+      {
+        id: 'ev_test_only',
+        title: '测试专属事件',
+        text: '只有测试文科会遇到',
+        category: 'random',
+        // 权重刻意给到极大：万一过滤失效，它必然被抽中，
+        // 于是「没被抽中」这个断言才有意义（否则只是运气好）
+        weight: 1_000_000,
+        majors: [OTHER_MAJOR.id],
+        effects: [],
+      },
+      {
+        // ev_test_only 的**未打标签孪生兄弟**：权重、条件、结构完全一样，
+        // 唯一的差别就是没有 majors 标签。
+        // 它存在的意义是证明上面那条测试不是空转：同一个权重下，
+        // 无标签的必然被抽中，有标签的必然不被抽中 ——
+        // 于是「专业过滤」被证明是真正起作用的那一环，而不是运气或权重问题。
+        id: 'ev_shared_twin',
+        title: '共享孪生事件',
+        text: '所有专业都会遇到',
+        category: 'random',
+        weight: 1_000_000,
+        effects: [],
+      },
+    ],
+    endings: [
+      {
+        id: 'ending_test_only',
+        title: '测试专属结局',
+        text: '只有测试文科能拿到',
+        // priority 比所有结局都靠前 + 恒真条件：只要可见就必然命中
+        priority: 5,
+        requires: { type: 'all', conditions: [] },
+        majors: [OTHER_MAJOR.id],
+      },
+      ...GAME_DATA.endings,
+    ],
+    summary: {
+      ...GAME_DATA.summary,
+      rules: [
+        {
+          // 恒真：只要专业对，这条必然出现在回顾里
+          requires: { type: 'all', conditions: [] },
+          kind: 'notable',
+          text: '测试专属回顾',
+          order: 1,
+          majors: [OTHER_MAJOR.id],
+        },
+        ...GAME_DATA.summary.rules,
+      ],
+    },
+  }
+}
+
+/** 用「一直休息」的策略把这局玩到结局（`rest` 是全专业共享行动） */
+function playToEndWith(data: GameData, majorId?: string): GameEngine {
+  const engine = new GameEngine(data, majorId === undefined ? { seed: 1 } : { seed: 1, majorId })
+  let guard = 0
+  while (!engine.isEnded() && guard++ < 500) {
+    if (engine.getPending()) {
+      chooseFirstEnabled(engine)
+      continue
+    }
+    engine.takeAction('rest')
+  }
+  return engine
+}
+
+describe('专业：解析与开局', () => {
+  it('不指定专业时用第一个专业（老调用方行为不变）', () => {
+    const engine = new GameEngine(GAME_DATA, { seed: 1 })
+    expect(engine.getState().majorId).toBe(GAME_DATA.majors[0]!.id)
+    expect(engine.getMajor()).toEqual(GAME_DATA.majors[0])
+  })
+
+  it('指定未知专业直接抛错，而不是静默回退到默认专业', () => {
+    // 静默回退会让「玩家选了文科、进的却是计算机」这种 bug 极难发现
+    expect(() => new GameEngine(GAME_DATA, { seed: 1, majorId: 'nope' })).toThrow(/未知专业/)
+  })
+
+  it('majors 为空时抛错（必须有一个默认专业）', () => {
+    expect(() => new GameEngine({ ...GAME_DATA, majors: [] }, { seed: 1 })).toThrow(/不能为空/)
+  })
+
+  it('每个专业的开局属性都落在 statRanges 内（I1 从第一帧就成立）', () => {
+    const data = dataWithSecondMajor()
+    for (const major of data.majors) {
+      const stats = new GameEngine(data, { seed: 1, majorId: major.id }).getState().stats
+      for (const key of STAT_ORDER) {
+        const range = data.config.statRanges[key]
+        expect(stats[key], `${major.id}.${key} 越界`).toBeGreaterThanOrEqual(range.min)
+        expect(stats[key], `${major.id}.${key} 越界`).toBeLessThanOrEqual(range.max)
+      }
+    }
+  })
+
+  it('专业偏移真的生效，而基准属性只写在 config 一处', () => {
+    const data = dataWithSecondMajor()
+    const base = new GameEngine(data, { seed: 1 }).getState().stats
+    const other = new GameEngine(data, { seed: 1, majorId: OTHER_MAJOR.id }).getState().stats
+
+    // 计算机没写 statBonus → 开局属性就是基准值本身（保证老种子完全不变）
+    expect(base).toEqual(GAME_DATA.config.initialStats)
+    expect(other.academic).toBe(GAME_DATA.config.initialStats.academic - 5)
+    expect(other.social).toBe(GAME_DATA.config.initialStats.social + 5)
+  })
+
+  it('开场白里的身份来自专业数据，不是引擎里写死的', () => {
+    const data = {
+      ...GAME_DATA,
+      majors: [{ ...GAME_DATA.majors[0]!, identity: '某专业大三学生' }],
+    }
+    const engine = new GameEngine(data, { seed: 1 })
+    expect(engine.getState().log[0]!.text).toContain('某专业大三学生')
+  })
+
+  it('结算回顾的身份跟着专业走', () => {
+    const data = dataWithSecondMajor()
+    const engine = new GameEngine(data, { seed: 1, majorId: OTHER_MAJOR.id })
+    expect(engine.getSummary().identity).toBe(OTHER_MAJOR.identity)
+  })
+})
+
+describe('专业：内容过滤是通用的（引擎里没有专业特判）', () => {
+  it('专属行动只在本专业出现，别的专业调用它会被明确拒绝', () => {
+    const data = dataWithSecondMajor()
+
+    const computer = new GameEngine(data, { seed: 1 })
+    expect(computer.availableActions().map((a) => a.id)).not.toContain('test_only_action')
+    expect(() => computer.takeAction('test_only_action')).toThrow(/不属于本专业/)
+
+    const other = new GameEngine(data, { seed: 1, majorId: OTHER_MAJOR.id })
+    expect(other.availableActions().map((a) => a.id)).toContain('test_only_action')
+    expect(() => other.takeAction('test_only_action')).not.toThrow()
+  })
+
+  it('专属随机事件在别的专业永远不会被抽到', () => {
+    // 概率拉满 + 权重给到极大：过滤一旦失效，这个事件必然出现
+    const data = dataWithSecondMajor()
+    const forced = { ...data, config: { ...data.config, weeklyEventChance: 1 } }
+
+    const computer = playToEndWith(forced)
+    const seen = computer.getState().seenEvents
+
+    // ★ 非空转证明：同权重的**无标签孪生**事件被抽中了……
+    expect(seen).toContain('ev_shared_twin')
+    // ……而有标签的专属事件一次都没出现。两者只差一个 majors 标签，
+    // 所以「专业过滤」被证明是真正起作用的那一环。
+    expect(seen).not.toContain('ev_test_only')
+
+    // 反向验证：本专业确实抽得到
+    const other = playToEndWith(forced, OTHER_MAJOR.id)
+    expect(other.getState().seenEvents).toContain('ev_test_only')
+  })
+
+  it('专属结局不会被别的专业拿到，本专业则必然命中', () => {
+    const data = dataWithSecondMajor()
+    const forced = { ...data, config: { ...data.config, weeklyEventChance: 1 } }
+
+    expect(playToEndWith(forced).getEnding()?.id).not.toBe('ending_test_only')
+    expect(playToEndWith(forced, OTHER_MAJOR.id).getEnding()?.id).toBe('ending_test_only')
+  })
+
+  it('专属回顾规则不会被别的专业渲染出来', () => {
+    const data = dataWithSecondMajor()
+    const textsOf = (majorId?: string) =>
+      playToEndWith(data, majorId).getSummary().lines.map((line) => line.text)
+
+    expect(textsOf()).not.toContain('测试专属回顾')
+    expect(textsOf(OTHER_MAJOR.id)).toContain('测试专属回顾')
+  })
+
+  it('每个专业都有兜底结局可见（I6：任何专业都不会卡死）', () => {
+    const data = dataWithSecondMajor()
+    for (const major of data.majors) {
+      const visible = data.endings.filter(
+        (ending) => ending.majors === undefined || ending.majors.includes(major.id),
+      )
+      const fallback = visible.filter(
+        (ending) => ending.requires.type === 'all' && ending.requires.conditions.length === 0,
+      )
+      expect(fallback.length, `${major.id} 没有恒真兜底结局，这个专业会卡死`).toBeGreaterThanOrEqual(1)
+    }
+  })
+})
+
+describe('专业：引擎里不许出现专业硬编码', () => {
+  /**
+   * 去掉注释再检查。注释是写给人看的说明（「引擎不认识计算机」这种话
+   * 本身就该写在注释里），不构成行为；而**代码**里出现专业名/id 才是硬编码。
+   */
+  const stripComments = (source: string) =>
+    source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+
+  const engineSources = (): { name: string; code: string }[] => {
+    const dir = fileURLToPath(new URL('../src/engine', import.meta.url))
+    return readdirSync(dir)
+      .filter((name) => name.endsWith('.ts'))
+      .map((name) => ({ name, code: stripComments(readFileSync(join(dir, name), 'utf8')) }))
+  }
+
+  it('扫描范围本身是有效的（否则下面两条测试等于空转）', () => {
+    const sources = engineSources()
+    expect(sources.length).toBeGreaterThanOrEqual(5)
+    expect(sources.some((s) => s.name === 'engine.ts')).toBe(true)
+    // 注释剥离确实生效：engine.ts 的注释里写着「计算机专业大三学生」，
+    // 剥完就不该再出现 —— 否则下面那条测试会因为注释而永远红
+    const engineTs = sources.find((s) => s.name === 'engine.ts')!
+    expect(engineTs.code).not.toContain('//')
+    expect(engineTs.code).not.toContain('/*')
+  })
+
+  it('引擎代码里不出现任何专业 id 字面量（杜绝 if (majorId === "computer") 这类分支）', () => {
+    for (const major of GAME_DATA.majors) {
+      for (const { name, code } of engineSources()) {
+        expect(
+          code.includes(`'${major.id}'`) || code.includes(`"${major.id}"`),
+          `${name} 里出现了专业 id 字面量 '${major.id}' —— 专业必须由数据决定，不能在引擎里特判`,
+        ).toBe(false)
+      }
+    }
+  })
+
+  it('引擎代码里不出现任何专业的身份/名称文案（杜绝写死的开场白）', () => {
+    for (const major of GAME_DATA.majors) {
+      for (const text of [major.identity, major.name]) {
+        for (const { name, code } of engineSources()) {
+          expect(code.includes(text), `${name} 里写死了专业文案「${text}」`).toBe(false)
+        }
+      }
+    }
+  })
+})
+
+describe('专业：金标指纹（引入专业维度不得改变任何一局）', () => {
+  /**
+   * 夹具来自**重构前**那次抓取（见 tests/golden-fingerprint.ts）。
+   *
+   * 它守的规则比「重构没弄坏东西」更强：
+   *   **新增一个专业，不得改变已有专业的任何一局。**
+   * 因为新专业的内容都带 majors 标签会被过滤掉，进不了已有专业的抽取池。
+   * 这条测试红了，就说明有人动了共享内容或破坏了过滤 ——
+   * 而那正是「加第 3 个专业只需要写数据」是否还成立的判据。
+   */
+  it('6 种风格 × 10 个种子的结局/属性/事件数全部与重构前逐位一致', () => {
+    const mismatches: string[] = []
+
+    for (const line of GOLDEN_FINGERPRINT) {
+      const [strategy, seedRaw, , , ,] = line.split('|')
+      const weights = STRATEGIES[strategy as string] ?? {}
+      const outcome = playOne(Number(seedRaw), weights)
+
+      const got = [
+        strategy,
+        seedRaw,
+        outcome.endingId,
+        STAT_ORDER.map((key) => outcome.stats[key]).join(','),
+        outcome.seenEvents.length,
+        outcome.summaryLines.length,
+      ].join('|')
+
+      if (got !== line) mismatches.push(`  期望 ${line}\n  实得 ${got}`)
+    }
+
+    expect(
+      mismatches,
+      `以下对局和引入专业维度之前不一致：\n${mismatches.join('\n')}`,
+    ).toEqual([])
+    // 夹具条数本身也要守着：夹具被误删会让这条测试变成空转
+    expect(GOLDEN_FINGERPRINT.length).toBe(60)
   })
 })
