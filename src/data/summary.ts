@@ -83,6 +83,13 @@ export const SUMMARY: SummaryContent = {
       text: '在 48 小时黑客松里熬了一整个通宵',
     },
     {
+      // 花钱换技能的那条线（见 events.ts 的「花钱换东西」一段）
+      requires: { type: 'flag', key: '报过班' },
+      kind: 'skill',
+      order: 33,
+      text: '自己掏钱报了个班，把一直想学的东西系统过了一遍',
+    },
+    {
       requires: { type: 'seenEvent', id: 'ev_lab_join' },
       kind: 'skill',
       order: 34,
@@ -141,6 +148,13 @@ export const SUMMARY: SummaryContent = {
       kind: 'health',
       order: 62,
       text: '身体发过一次警告，逼你正视作息',
+    },
+    {
+      // 花钱换健康的那条线（见 events.ts 的「花钱换东西」一段）
+      requires: { type: 'flag', key: '办了健身卡' },
+      kind: 'health',
+      order: 64,
+      text: '办了张健身卡，虽然没做到天天去，但确实练出了点底子',
     },
 
     /* ---------------- 经济 ---------------- */
@@ -221,9 +235,19 @@ export const SUMMARY: SummaryContent = {
       text: '认识的人比同届大多数人都多',
     },
     {
-      requires: { type: 'stat', key: 'social', op: '<=', value: 30 },
+      requires: { type: 'stat', key: 'social', op: '<=', value: 35 },
       kind: 'social',
       order: 84,
+      /**
+       * 阈值从 30 抬到 35（阶段 2.6）。这不是为了让检查变绿，而是因为 30 本来就卡在
+       * **实际地板上**：社交从 50 起、每周 −1，什么都不做也会停在 ~34；
+       * 也就是说 ≤30 需要额外的社交损失才能碰到，历史上只靠 **2800 局里漏出 1 局**
+       * 通过（计算机），文科则是 0 局 —— 一条「偶尔靠运气可达」的规则不是可达。
+       *
+       * 新增「约同学打球」这类不花钱的社交之后，地板抬到 31，那唯一一局也没了。
+       * 抬到 35 后两个专业各有 16–20 局命中（实测 400 局 × 7 风格），
+       * 而且语义没变：社交只有 35 = 这个学期基本没跟人来往。
+       */
       text: '大部分时间都是一个人过的',
     },
     {

@@ -425,6 +425,17 @@ async function main() {
       let headline = ''
       let m = {}
 
+      // 需要「游戏进行中」的状态时，先把游戏往前推。
+      // 放在分支**之前**，这样它和 `--projects` 也能组合
+      //（开局屏与结算页不需要，它们各自是一屏独立的状态）。
+      if (WANT_ADVANCE && !WANT_START && !WANT_ENDING) {
+        await send('Runtime.evaluate', {
+          expression: advanceScript(ADVANCE_STEPS, PREFER_LABEL),
+          awaitPromise: true,
+          returnByValue: true,
+        })
+      }
+
       if (WANT_START) {
         const res = await send('Runtime.evaluate', { expression: MEASURE_START, returnByValue: true })
         m = JSON.parse(res.result.value)
@@ -487,13 +498,6 @@ async function main() {
           `结算页：回顾 ${m.lineCount} 条，卡片高 ${m.cardHeight}px，` +
           `整页可滚动 ${m.overlayScrollable ? '是' : '否'}`
       } else {
-        if (WANT_ADVANCE) {
-          await send('Runtime.evaluate', {
-            expression: advanceScript(ADVANCE_STEPS, PREFER_LABEL),
-            awaitPromise: true,
-            returnByValue: true,
-          })
-        }
         const res = await send('Runtime.evaluate', { expression: MEASURE, returnByValue: true })
         m = JSON.parse(res.result.value)
         if (m.docsOverflowX) problems.push('页面横向溢出')

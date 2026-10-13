@@ -64,6 +64,7 @@ function deadContentOf(report: ReturnType<typeof simulate>) {
   const deadEndings: string[] = []
   const deadEvents: string[] = []
   const deadRules: string[] = []
+  const deadChoices: string[] = []
 
   for (const major of report.majors) {
     for (const ending of major.deadEndings) {
@@ -75,8 +76,17 @@ function deadContentOf(report: ReturnType<typeof simulate>) {
     for (const rule of deadSummaryRules(major.content.summaryTexts, major.majorId)) {
       deadRules.push(`${major.majorId}: ${rule.text}`)
     }
+    for (const choice of major.content.deadChoices) {
+      deadChoices.push(`${major.majorId}: ${choice.title} → 「${choice.label}」(${choice.eventId})`)
+    }
   }
-  return { deadEndings, deadEvents, deadRules }
+  const deadActions: string[] = []
+  for (const major of report.majors) {
+    for (const action of major.content.deadActions) {
+      deadActions.push(`${major.majorId}: ${action.label}(${action.id})`)
+    }
+  }
+  return { deadEndings, deadEvents, deadRules, deadChoices, deadActions }
 }
 
 /* ============================================================
@@ -543,6 +553,47 @@ describe('内容数据合法性', () => {
       '以下「专业 + 回顾规则」在所有决策风格下都从未触发，检查条件是否过严（尤其是属性阈值类规则）',
     ).toEqual([])
   })
+
+  /**
+   * 第六个「死 XX」不变量：**事件选项**。
+   *
+   * 判据是「曾经可点（enabled）过」，不是「被选过」—— 模拟器随机挑选项，
+   * 「没被选中」可能只是运气；而「连点都点不了」说明那个 `requires` 严到
+   * 条件永远凑不齐，玩家一辈子看不到这个选项。
+   *
+   * 这条是加「花钱换属性」时补的：那些选项靠 `money >= X` 把关，
+   * 而钱在这个游戏里是紧的（每周固定 −100），很容易写出一个永远付不起的门槛。
+   * 只查**触发过**的事件：根本没出现过的事件，它的选项当然没被启用过，
+   * 但那是「死事件」的判据，混进来只会产生一堆下游噪音。
+   */
+  it('每个事件选项都至少可点过一次（没有死选项，且按专业成立）', () => {
+    const report = runFullSimulation()
+    const { deadChoices } = deadContentOf(report)
+
+    expect(
+      deadChoices,
+      '以下「专业 + 选项」在所有决策风格下都从未被启用 —— 那个 requires 严到永远凑不齐（比如要的钱根本攒不够）',
+    ).toEqual([])
+  })
+
+  /**
+   * 第七个「死 XX」不变量：**行动**。
+   *
+   * 行动是内容里写得最多的一类，却最晚被纳入检查 —— 因为绝大多数行动没有 `requires`，
+   * 天生就在菜单上。直到出现「钱 < 40 才显示」这种条件性行动，才需要一个
+   * 「它到底有没有真的出现过」的判据。
+   *
+   * 判据同样是「曾经出现在菜单上」，不是「被选过」。
+   */
+  it('每个行动都至少上过一次菜单（没有死行动，且按专业成立）', () => {
+    const report = runFullSimulation()
+    const { deadActions } = deadContentOf(report)
+
+    expect(
+      deadActions,
+      '以下「专业 + 行动」在所有决策风格下都从未出现在菜单上 —— 它的 requires 永远不满足',
+    ).toEqual([])
+  })
 })
 
 /* ============================================================
@@ -916,7 +967,7 @@ describe('专业：金标指纹（引入专业维度不得改变任何一局）'
    * 这条测试红了，就说明有人动了共享内容或破坏了过滤 ——
    * 而那正是「加第 3 个专业只需要写数据」是否还成立的判据。
    */
-  it('6 种风格 × 10 个种子的结局/属性/事件数全部与重构前逐位一致', () => {
+  it('7 种风格 × 10 个种子的结局/属性/事件数全部与上次抓取逐位一致', () => {
     const mismatches: string[] = []
 
     for (const line of GOLDEN_FINGERPRINT) {
@@ -945,10 +996,10 @@ describe('专业：金标指纹（引入专业维度不得改变任何一局）'
 
     expect(
       mismatches,
-      `以下对局和引入专业维度之前不一致：\n${mismatches.join('\n')}`,
+      `以下对局和上次抓取指纹时不一致：\n${mismatches.join('\n')}`,
     ).toEqual([])
     // 夹具条数本身也要守着：夹具被误删会让这条测试变成空转
-    expect(GOLDEN_FINGERPRINT.length).toBe(60)
+    expect(GOLDEN_FINGERPRINT.length).toBe(70)
   })
 })
 

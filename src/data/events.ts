@@ -1158,7 +1158,18 @@ export const EVENTS: GameEvent[] = [
     title: '实习第一天',
     text: '你背着包走进写字楼，工牌还没领，mentor 已经拉你进了三个群。',
     category: 'random',
-    weight: 2,
+    /**
+     * 权重从 2 抬到 6（阶段 2.6）。原因不是「检查红了要让它变绿」，而是实测发现
+     * 这条链的**最后一环才是瓶颈**：
+     *   2800 局里，两个专业各有约 50% 的对局能在第 10 周后把技能练到 60（拿到门票），
+     *   拿到实习 Offer 的文科 79 局、计算机 130 局 —— 但「实习第一天」只出现了 4 / 10 局。
+     * 因为「拿到 Offer」最早也在第 10 周，留给这条后续事件的机会只剩 6 次抽签，
+     * 而权重 2 在池子里本来就难被抽中。
+     *
+     * 也就是说：**一旦你真的拿到了实习，反而大概率看不到实习第一天** ——
+     * 这是内容节奏的漏洞，不是抽样运气。抬权重正是修它。
+     */
+    weight: 6,
     requires: {
       type: 'all',
       conditions: [
@@ -1378,6 +1389,138 @@ export const EVENTS: GameEvent[] = [
     effects: [
       { type: 'stat', key: 'academic', delta: -1 },
       { type: 'stat', key: 'mood', delta: -2 },
+    ],
+  },
+
+  /* ════════════════ 花钱换东西（阶段 2.6）════════════════
+   *
+   * ── 为什么要有这一段 ──
+   * 修这段之前，钱的用途只有三类：每周固定生活费（强制、无法决策）、
+   * 「少损失」（修电脑、看病、买教材）、以及聚餐约会那种小额情绪消费。
+   * 也就是说：**钱只能被动地抵挡衰减，不能主动换成任何东西** ——
+   * 攒下来的钱没有任何出口，兼职这条线因此缺乏意义。
+   *
+   * ── 为什么做成「限周 + 一次性」的事件，而不是常驻行动 ──
+   * 事件**不消耗行动力**，所以「花钱换属性」实质是「用钱买时间」。
+   * 如果做成常驻行动，`兼职(+¥280/点) → 花钱买` 就能形成闭环，
+   * 转化率一给高就会滚成唯一最优解，把「写代码 / 写稿」这类专业行动挤掉。
+   * 限周 + 默认不可重复（`repeatable` 不写就是 false）让它**天然刷不了**：
+   * 一局最多各出现一次，而且是机会而不是菜单。
+   *
+   * 数值上刻意**不比直接行动更划算**（否则没人做正事了）：
+   *   健身卡 ¥300 → 健康 +11，相当于用 ¥300 换约 1.5 点行动力的运动量
+   *   培训班 ¥350 → 技能 +7，比「写代码 1 点行动力 +4 技能」略强，
+   *                        但算上挣这 ¥350 要花掉的行动力就不划算了
+   * 具体形状由 `pnpm simulate` 定，不是我拍脑袋。
+   */
+
+  {
+    id: 'ev_gym_card',
+    title: '健身房的开学促销',
+    text: '学校旁边那家健身房在门口摆摊：「学生年卡，今天最后一天。」你捏了捏自己爬三楼就开始酸的腿。',
+    category: 'random',
+    weight: 2,
+    requires: {
+      type: 'all',
+      conditions: [
+        { type: 'week', op: '>=', value: 3 },
+        { type: 'week', op: '<=', value: 7 },
+      ],
+    },
+    choices: [
+      {
+        label: '办张年卡（¥220）',
+        requires: { type: 'stat', key: 'money', op: '>=', value: 220 },
+        effects: [
+          { type: 'stat', key: 'money', delta: -220 },
+          { type: 'stat', key: 'health', delta: 10 },
+          { type: 'stat', key: 'mood', delta: 3 },
+          { type: 'setFlag', key: '办了健身卡', value: true },
+          { type: 'log', text: '头两周你天天去，后来变成一周两次 —— 但确实比不办强。' },
+        ],
+      },
+      {
+        // 无条件选项：条件全不满足时玩家也必须有路可走
+        label: '算了，跑步又不要钱',
+        effects: [{ type: 'stat', key: 'mood', delta: -1 }],
+      },
+    ],
+  },
+  {
+    id: 'ev_skill_course',
+    title: '那个课在打折',
+    text: '一直想学的那个东西，这周线上课打折。你把它加进购物车，关掉，又打开。',
+    category: 'random',
+    weight: 2,
+    requires: {
+      type: 'all',
+      conditions: [
+        { type: 'week', op: '>=', value: 4 },
+        { type: 'week', op: '<=', value: 9 },
+      ],
+    },
+    choices: [
+      {
+        label: '付钱报班（¥300）',
+        requires: { type: 'stat', key: 'money', op: '>=', value: 300 },
+        effects: [
+          { type: 'stat', key: 'money', delta: -300 },
+          { type: 'stat', key: 'skill', delta: 6 },
+          { type: 'stat', key: 'academic', delta: 1 },
+          { type: 'stat', key: 'mood', delta: -2 },
+          { type: 'setFlag', key: '报过班', value: true },
+          { type: 'log', text: '课程比想象中扎实，你甚至认真做了笔记。' },
+        ],
+      },
+      {
+        // 免费的那条路：能走通，但明显更慢 —— 这样「花钱买效率」才有意义
+        label: '找免费资料自己啃',
+        effects: [
+          { type: 'stat', key: 'skill', delta: 1 },
+          { type: 'stat', key: 'mood', delta: -2 },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'ev_class_gathering',
+    title: '班级聚会',
+    text: '班委在群里发起周末聚餐，人均两百。有人已经接龙了，也有人一直没说话。',
+    category: 'random',
+    weight: 2,
+    requires: {
+      type: 'all',
+      conditions: [
+        { type: 'week', op: '>=', value: 6 },
+        { type: 'week', op: '<=', value: 12 },
+      ],
+    },
+    choices: [
+      {
+        label: '接龙，这顿我请（¥180）',
+        requires: { type: 'stat', key: 'money', op: '>=', value: 180 },
+        effects: [
+          { type: 'stat', key: 'money', delta: -180 },
+          { type: 'stat', key: 'social', delta: 8 },
+          { type: 'stat', key: 'mood', delta: 5 },
+          { type: 'log', text: '账单你付了，大家记着你这份人情。' },
+        ],
+      },
+      {
+        // 同一件事的「不花钱」版本：一样有效果，但明显更小 ——
+        // 这正是新行动「约同学打球」想表达的那种社交
+        label: '只出力不出钱：我来张罗',
+        effects: [
+          { type: 'stat', key: 'social', delta: 3 },
+          { type: 'stat', key: 'mood', delta: 2 },
+          { type: 'stat', key: 'academic', delta: -1 },
+          { type: 'log', text: '订位置、催人、拍照都是你 —— 一样混了个脸熟。' },
+        ],
+      },
+      {
+        label: '不去',
+        effects: [{ type: 'stat', key: 'mood', delta: -2 }],
+      },
     ],
   },
 ]

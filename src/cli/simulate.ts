@@ -58,21 +58,39 @@ export const STRATEGIES: Record<string, Record<string, number>> = {
   均衡派: {
     study: 4, socialize: 4, exercise: 3, rest: 3, parttime: 3, code: 4, job_hunt: 3,
     write: 3, read_lit: 4,
+    // 「不花钱的社交」：只是没钱时的退路，不该成为主力（数值被 simulate 打回过一次）
+    hangout: 2,
     __project: 0,
   },
   学霸: {
     study: 9, socialize: 1, exercise: 2, rest: 2, parttime: 2, code: 3, job_hunt: 2,
     write: 3, read_lit: 5,
+    // 约人打球要占一下午学业，学霸最不情愿
+    hangout: 1,
     __project: 0,
   },
   技术宅: {
     study: 3, socialize: 1, exercise: 2, rest: 2, parttime: 2, code: 9, job_hunt: 4,
     write: 9, read_lit: 2,
+    // 权重 0：这个风格**主动避开人群**。
+    //
+    // 这条不是随手填的：加了「约同学打球」（不花钱的社交）之后，
+    // 「大部分时间都是一个人过的」（social ≤ 30）在两个专业都变成了死规则 ——
+    // 因为从此再穷也能涨社交，谁都不会落到 30 以下。
+    // 而「孤僻的技术宅」是这个项目一开始就刻意保留的设定
+    //（README 的坑列表里记着：当年「投简历」白送社交 +2 就把这个设定堵死过一次）。
+    // 所以让这个风格继续不社交，是在保护那条人设，而不是为了把规则「调活」。
+    hangout: 0,
     __project: 0,
   },
   社交达人: {
     study: 2, socialize: 9, exercise: 2, rest: 2, parttime: 2, code: 2, job_hunt: 1,
     write: 2, read_lit: 2,
+    // 这个风格以前会被「钱包见底就交不到朋友」卡死（聚餐要 ¥40），
+    // 现在它有了不花钱的那条路。但权重不能给高：一个真·社交达人穷到没钱时
+    // 也总得去兼职（每周还要 −100 生活费），否则会一路穷到「为钱所困」
+    //（实测给到 6 时，社交达人风格的为钱所困从 18.5% 涨到 31.5%）
+    hangout: 3,
     __project: 0,
   },
   躺平: {
@@ -84,6 +102,8 @@ export const STRATEGIES: Record<string, Record<string, number>> = {
     // 「学业崩塌」这条对文科生完全真实的失败路线就没人代表了。
     // 摆烂的文科生就是既不读书也不动笔 —— 这个风格必须存在。
     write: 0, read_lit: 0,
+    // 躺平就是躺着：不主动约人
+    hangout: 1,
     __project: 0,
   },
   随机: { __project: 0 },
@@ -104,6 +124,7 @@ export const STRATEGIES: Record<string, Record<string, number>> = {
   作品派: {
     study: 3, socialize: 2, exercise: 2, rest: 3, parttime: 2, code: 4, job_hunt: 1,
     write: 5, read_lit: 3,
+    hangout: 1,
     __project: 6,
   },
 }
@@ -151,6 +172,26 @@ export interface SimOutcome {
   summaryLines: string[]
   /** 本局完成的项目 id —— 用于检查有没有「死项目」 */
   completedProjects: string[]
+  /**
+   * 本局里**曾经可点**的选项，key 形如 `ev_gym_card#0`。
+   *
+   * 为什么记这个而不是「玩家实际选了什么」：
+   * 模拟器是随机选选项的，所以「没被选中」可能只是运气；
+   * 而「**从来没能点**」才是真正的问题 —— 说明那个 `requires` 严到
+   * 条件永远凑不齐，玩家一辈子看不到这个选项（比如钱永远攒不够）。
+   * 这条不变量是加「花钱换属性」时补的：那些选项靠 `money >= X` 把关，
+   * 而钱在这个游戏里是紧的，很容易写出一个永远点不起的门槛。
+   */
+  enabledChoices: string[]
+  /**
+   * 本局里**曾经出现在行动菜单上**的行动 id。
+   *
+   * 为什么不直接记「选过哪些」：模拟器按权重随机选，「没被选中」可能只是运气；
+   * 而「从来没出现在菜单里」说明它的 `requires` 永远不满足 —— 玩家看不到它。
+   * 行动是内容里最常被写的一类，却是最后一个被纳入「死内容」检查的：
+   * 加「约同学打球（钱 < 40 才出现）」时正好需要它来验证门槛真的会被触发。
+   */
+  enabledActions: string[]
 }
 
 /** playOne 的一个候选动作：一次行动，或者向某个项目投一次 */
@@ -179,6 +220,8 @@ export function playOne(
   // 项目投入是 opt-in：没写 __project 的风格完全不投项目。
   // 这样「老风格」的候选列表里连项目都不会出现，它们的随机流保持逐位不变。
   const projectWeight = weights['__project'] ?? 0
+  const enabledChoices = new Set<string>()
+  const enabledActions = new Set<string>()
   let guard = 0
 
   while (!engine.isEnded() && guard++ < 5000) {
@@ -188,6 +231,7 @@ export function playOne(
         .getPendingChoices()
         .map((view, index) => ({ view, index }))
         .filter((item) => item.view.enabled)
+      for (const item of enabled) enabledChoices.add(`${pending.id}#${item.index}`)
       const picked = pickOne(enabled, rng)
       engine.choose(picked ? picked.index : 0)
       continue
@@ -200,6 +244,7 @@ export function playOne(
         engine.takeAction(action.id)
       },
     }))
+    for (const candidate of candidates) enabledActions.add(candidate.label)
 
     if (projectWeight > 0) {
       const actionPoints = engine.getState().actionPoints
@@ -234,6 +279,8 @@ export function playOne(
       .getProjects()
       .filter((view) => view.completed)
       .map((view) => view.project.id),
+    enabledChoices: [...enabledChoices],
+    enabledActions: [...enabledActions],
   }
 }
 
@@ -268,6 +315,21 @@ export interface ContentMetrics {
    * 和那句完成文案 —— 它只是白占着代码，还让人以为「这条路能走」。
    */
   deadProjects: { id: string; name: string }[]
+  /**
+   * 从来没**能被点过**的事件选项。
+   *
+   * 判据是「曾经 enabled 过」，不是「被选过」：模拟器随机选选项，
+   * 「没被选中」可能只是运气；而「连点都点不了」说明那个 `requires`
+   * 严到条件永远凑不齐 —— 玩家一辈子看不到这个选项。
+   * 典型场景就是「花钱换属性」的选项被 `money >= X` 卡死。
+   */
+  deadChoices: { eventId: string; title: string; label: string }[]
+  /**
+   * 从来没出现在行动菜单上的行动。
+   * 「行动」是内容里写得最多的一类，容易被忘掉检查 —— 一个 `requires`
+   * 永远凑不齐的行动，玩家根本看不到它，和死事件一样是死内容。
+   */
+  deadActions: { id: string; label: string }[]
   /** 单事件最高出现率（0~1）。太高 = 每局必见 = 重复感的来源 */
   maxEventRate: number
   hottestEventId: string
@@ -317,9 +379,11 @@ function simulateMajor(
   // 内容度量用
   const eventCounts = new Map<string, number>()
   const completedProjects = new Set<string>()
+  const enabledChoices = new Set<string>()
   const seenPerGame: string[][] = []
   const gameStrategy: string[] = []
   const summaryTexts = new Set<string>()
+  const enabledActionsAll = new Set<string>()
   let totalDistinct = 0
 
   for (const name of strategyNames) {
@@ -344,6 +408,8 @@ function simulateMajor(
       }
       for (const text of outcome.summaryLines) summaryTexts.add(text)
       for (const id of outcome.completedProjects) completedProjects.add(id)
+      for (const key of outcome.enabledChoices) enabledChoices.add(key)
+      for (const id of outcome.enabledActions) enabledActionsAll.add(id)
     }
 
     statTotals.set(name, totals)
@@ -391,11 +457,33 @@ function simulateMajor(
     .filter((project) => !completedProjects.has(project.id))
     .map((project) => ({ id: project.id, name: project.name }))
 
+  // 死选项：本专业可见、**而且真的触发过**的事件里，有哪个选项从来没被启用过。
+  //
+  // 只查「触发过」的事件是刻意的：一个根本没出现过的事件，它的所有选项当然
+  // 都没被启用过 —— 但那是「死事件」的判据，不是这一条的。
+  // 混在一起会让报告里出现一堆重复的下游噪音（一个死事件带出 2–3 条假死选项）。
+  const deadChoices: { eventId: string; title: string; label: string }[] = []
+  for (const event of visible.events) {
+    if (!eventCounts.has(event.id)) continue
+    const choices = event.choices ?? []
+    choices.forEach((choice, index) => {
+      if (!enabledChoices.has(`${event.id}#${index}`)) {
+        deadChoices.push({ eventId: event.id, title: event.title, label: choice.label })
+      }
+    })
+  }
+
+  const deadActions = visible.actions
+    .filter((action) => !enabledActionsAll.has(action.id))
+    .map((action) => ({ id: action.id, label: action.label }))
+
   const content: ContentMetrics = {
     eventCounts,
     games: totalGames,
     deadEvents,
     deadProjects,
+    deadChoices,
+    deadActions,
     maxEventRate,
     hottestEventId,
     repetition: overlapPairs > 0 ? overlapSum / overlapPairs : 0,
@@ -564,6 +652,25 @@ function renderContentHealth(major: MajorReport): void {
       for (const project of content.deadProjects) {
         console.log(`                             - ${project.name} (${project.id})`)
       }
+    }
+  }
+
+  if (content.deadChoices.length === 0) {
+    console.log('  死选项:                ✅ 无（每个事件的每个选项都至少可点过一次）')
+  } else {
+    console.log(`  死选项:                ⚠ 有 ${content.deadChoices.length} 个从来没被启用过：`)
+    for (const choice of content.deadChoices) {
+      console.log(`                             - ${choice.title}：${choice.label} (${choice.eventId})`)
+    }
+    console.log('                             多半是 requires 太严（比如要的钱永远攒不够）')
+  }
+
+  if (content.deadActions.length === 0) {
+    console.log(`  死行动:                ✅ 无（${visible.actions.length} 个行动都上过菜单）`)
+  } else {
+    console.log(`  死行动:                ⚠ 有 ${content.deadActions.length} 个从未出现在菜单上：`)
+    for (const action of content.deadActions) {
+      console.log(`                             - ${action.label} (${action.id})`)
     }
   }
 

@@ -150,8 +150,15 @@ describe('作品 / 项目界面', () => {
   })
 
   it('选项达到 8 个时切到压缩模式（收起风味描述，保证全部选项可见）', () => {
-    const eight = [...computerActions, GAME_DATA.actions[0]!]
-    const seven = computerActions
+    // 从真实行动表里切片，而不是手写死数量 —— 加了新行动之后这条测试才不会假失败
+    expect(
+      computerActions.length,
+      '这条测试需要至少 8 个行动才能验证压缩模式的边界',
+    ).toBeGreaterThanOrEqual(8)
+
+    const seven = computerActions.slice(0, 7)
+    const eight = computerActions.slice(0, 8)
+
     expect(
       renderToString(<ActionPanel actions={eight} actionPoints={3} onAct={() => {}} />),
       '8 个选项时应该压缩',
