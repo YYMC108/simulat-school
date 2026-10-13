@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { STRATEGIES, deadSummaryRules, playOne, simulate } from '../src/cli/simulate'
+import { STRATEGIES, deadSummaryRules, isolateMajor, playOne, simulate } from '../src/cli/simulate'
 import type { MajorContent } from '../src/cli/simulate'
 import { auditFlags, auditFlagsOf, flagUsageOf } from '../src/cli/audit'
 import { GAME_DATA } from '../src/data/index'
@@ -558,6 +558,7 @@ describe('内容数据合法性：死 flag（静态审计）', () => {
     actions: GAME_DATA.actions,
     events: GAME_DATA.events,
     endings: GAME_DATA.endings,
+    projects: GAME_DATA.projects,
     summaryRules: GAME_DATA.summary.rules,
     weeklyEffects: GAME_DATA.config.weeklyEffects,
   }
@@ -596,6 +597,7 @@ describe('内容数据合法性：死 flag（静态审计）', () => {
       ],
       summaryRules: [],
       weeklyEffects: [],
+      projects: [],
     }
 
     const audit = auditFlagsOf(content)
@@ -947,5 +949,203 @@ describe('专业：金标指纹（引入专业维度不得改变任何一局）'
     ).toEqual([])
     // 夹具条数本身也要守着：夹具被误删会让这条测试变成空转
     expect(GOLDEN_FINGERPRINT.length).toBe(60)
+  })
+})
+
+/* ============================================================
+ * 项目 / 作品系统（阶段 2.2）
+ * ========================================================== */
+
+/** 把待处理事件全部处理掉，方便连续测试（否则 investProject 会因为 pending 抛错） */
+function drainPending(engine: GameEngine): void {
+  let guard = 0
+  while (engine.getPending() && guard++ < 50) chooseFirstEnabled(engine)
+}
+
+describe('项目 / 作品系统：机制', () => {
+  const viewOf = (engine: GameEngine, id: string) =>
+    engine.getProjects().find((view) => view.project.id === id)!
+
+  it('进度会累计；攒满即完成并写入完成 flag；完成后不能再投入', () => {
+    const engine = new GameEngine(GAME_DATA, { seed: 1, majorId: 'literature' })
+
+    // 文科开局技能 28，而诗集要求 30 —— 先写一次稿
+    expect(viewOf(engine, 'proj_poetry').unlocked, '技能 28 时诗集不该解锁').toBe(false)
+    engine.takeAction('write')
+    expect(viewOf(engine, 'proj_poetry').unlocked, '写了稿之后应该解锁').toBe(true)
+
+    const required = viewOf(engine, 'proj_poetry').required
+    for (let i = 0; i < required; i++) {
+      drainPending(engine)
+      engine.investProject('proj_poetry')
+    }
+
+    expect(viewOf(engine, 'proj_poetry').progress).toBe(required)
+    expect(viewOf(engine, 'proj_poetry').completed).toBe(true)
+    expect(engine.getState().flags['项目_诗集_完成']).toBe(true)
+
+    drainPending(engine)
+    expect(() => engine.investProject('proj_poetry')).toThrow(/已经完成/)
+  })
+
+  it('投入的日志带上进度与真实变化量（回执，不是预告）', () => {
+    const engine = new GameEngine(GAME_DATA, { seed: 1, majorId: 'literature' })
+    engine.takeAction('write')
+
+    const result = engine.investProject('proj_poetry')
+    const entry = result.logs.find((log) => log.text.includes('投入到'))
+    expect(entry, '应该有一条「投入到」日志').toBeDefined()
+    expect(entry!.text, '日志要写明进度，玩家不用回头翻面板').toContain('进度 1/')
+    expect(entry!.changes, '投入必须带实际变化量（回执）').toBeDefined()
+    expect(entry!.changes!.some((change) => change.key === 'skill' && change.delta > 0)).toBe(true)
+
+    // 完成那一刻的奖励挂在完成日志上
+    drainPending(engine)
+    engine.investProject('proj_poetry')
+    drainPending(engine)
+    const final = engine.investProject('proj_poetry')
+    const done = final.logs.find((log) => log.text.includes('完成了'))
+    expect(done, '应该有一条完成日志').toBeDefined()
+    expect(done!.changes, '完成奖励必须带实际变化量').toBeDefined()
+  })
+
+  it('未解锁的项目投入会被拒绝（fail fast，而不是默默扣行动力）', () => {
+    const engine = new GameEngine(GAME_DATA, { seed: 1, majorId: 'literature' })
+    // 长篇要求技能 45，文科开局 28
+    expect(() => engine.investProject('proj_longform')).toThrow(/条件不满足/)
+    expect(engine.getState().actionPoints, '被拒绝时不该扣行动力').toBe(
+      GAME_DATA.config.actionPointsPerWeek,
+    )
+  })
+
+  it('别的专业的项目既不可见也不能投入', () => {
+    const engine = new GameEngine(GAME_DATA, { seed: 1, majorId: 'literature' })
+    expect(engine.getProjects().map((view) => view.project.id)).not.toContain('proj_opensource')
+    expect(() => engine.investProject('proj_opensource')).toThrow(/不属于本专业/)
+  })
+
+  it('未知项目抛错', () => {
+    const engine = new GameEngine(GAME_DATA, { seed: 1 })
+    expect(() => engine.investProject('proj_nope')).toThrow(/未知项目/)
+  })
+
+  it('有待处理事件时不能投入项目（和 takeAction 同一套相位控制）', () => {
+    const data = { ...GAME_DATA, config: { ...GAME_DATA.config, weeklyEventChance: 1 } }
+    const engine = new GameEngine(data, { seed: 3 })
+    while (engine.getState().actionPoints > 0 && !engine.getPending()) {
+      engine.takeAction('rest')
+    }
+    expect(engine.getPending()).not.toBeNull()
+    expect(() => engine.investProject('proj_algorithm')).toThrow(/未处理的事件/)
+  })
+
+  /**
+   * I9（回执 = 真实变化）从「行动」扩展到「项目」。
+   * 项目是第二个会改属性的入口，它当然也要守同一条不变量 ——
+   * 否则玩家做项目时看到的数字就可能是假的。
+   */
+  it('项目投入也遵守 I9：回执报告的变化量之和等于属性真实变化', () => {
+    const engine = new GameEngine(GAME_DATA, { seed: 5, majorId: 'literature' })
+    engine.takeAction('write')
+    let guard = 0
+
+    while (!engine.isEnded() && guard++ < 400) {
+      if (engine.getPending()) {
+        chooseFirstEnabled(engine)
+        continue
+      }
+      const usable = engine.getProjects().filter((view) => view.unlocked && !view.completed)
+      const before = engine.getState().stats
+      const result =
+        usable.length > 0
+          ? engine.investProject(usable[0]!.project.id)
+          : engine.takeAction('study')
+      const after = engine.getState().stats
+
+      const said = new Map<StatKey, number>()
+      for (const log of result.logs) {
+        for (const change of log.changes ?? []) {
+          said.set(change.key, (said.get(change.key) ?? 0) + change.delta)
+        }
+      }
+      for (const key of STAT_ORDER) {
+        expect(
+          said.get(key) ?? 0,
+          `seed=5 第${engine.getState().week}周 ${key}: 回执说 ${said.get(key) ?? 0}，实际变了 ${after[key] - before[key]}`,
+        ).toBe(after[key] - before[key])
+      }
+    }
+  })
+})
+
+describe('项目：无死项目（按专业）', () => {
+  it('每个专业可见的项目都被真的完成过', () => {
+    const report = runFullSimulation()
+    const dead: string[] = []
+    for (const major of report.majors) {
+      for (const project of major.content.deadProjects) {
+        dead.push(`${major.majorId}: ${project.name}(${project.id})`)
+      }
+    }
+
+    // 先确认这条测试不是空转：数据集里确实有项目
+    expect(GAME_DATA.projects.length).toBeGreaterThan(0)
+    expect(
+      dead,
+      '以下项目在所有决策风格下都从未被完成过 —— 玩家永远看不到它的完成奖励与文案',
+    ).toEqual([])
+  })
+})
+
+describe('项目：经典风格的随机流不被项目机制扰动', () => {
+  /**
+   * 这是金标指纹仍然成立的原因，值得单独钉死：
+   * 项目投入是 **opt-in**（`__project` 默认为 0），
+   * 所以 6 个经典风格的候选列表里连项目都不会出现，随机流逐位不变。
+   * 哪天有人手滑给了某个经典风格一个非零项目权重，这条会立刻报警，
+   * 而不是让金标指纹给出一个看不懂的失败原因。
+   */
+  it('6 个经典风格明确不投项目，只有「作品派」投', () => {
+    for (const name of ['均衡派', '学霸', '技术宅', '社交达人', '躺平', '随机']) {
+      expect(STRATEGIES[name]!['__project'], `${name} 应该明确不投项目（__project: 0）`).toBe(0)
+    }
+    expect(STRATEGIES['作品派']!['__project']).toBeGreaterThan(0)
+  })
+})
+
+describe('专业隔离：一个专业的对局不受其他专业内容影响', () => {
+  /**
+   * 「加第 3 个专业只需要写数据」这句话的真正判据 ——
+   * 它不依赖任何冻结的夹具，所以永远不会过期：
+   *
+   *   把 A 专业的内容**单独**拎出来跑一局，
+   *   与它在完整数据集（含 B 专业的全部内容）里跑，
+   *   结果必须逐位相同。
+   *
+   * 如果哪天引擎里的专业过滤漏了一处，B 专业的内容就会渗进 A 的池子，
+   * 这条测试会直接指出来。
+   */
+  it('每个专业在「单独数据集」与「完整数据集」里的对局完全一致', () => {
+    const mismatches: string[] = []
+
+    for (const major of GAME_DATA.majors) {
+      const isolated = isolateMajor(major.id)
+      for (const [strategy, weights] of Object.entries(STRATEGIES)) {
+        for (const seed of [1, 2, 3, 7, 42]) {
+          const full = playOne(seed, weights, major.id)
+          const alone = playOne(seed, weights, major.id, isolated)
+          if (JSON.stringify(full) !== JSON.stringify(alone)) {
+            mismatches.push(`  ${major.id} / ${strategy} / seed=${seed}`)
+          }
+        }
+      }
+    }
+
+    expect(
+      mismatches,
+      `以下对局在「单独跑该专业」和「完整数据集」下结果不同 —— 说明别的专业的内容渗进了它的池子：\n${mismatches.join('\n')}`,
+    ).toEqual([])
+    // 非空转：确实比较了每个专业
+    expect(GAME_DATA.majors.length).toBeGreaterThanOrEqual(2)
   })
 })

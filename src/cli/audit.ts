@@ -128,6 +128,19 @@ export function flagUsageOf(content: MajorContent): FlagUsage {
   for (const rule of content.summaryRules) {
     // 回顾规则只读不写：叙述本来就是消费 flag 的地方
     walkCondition(rule.requires, usage)
+    // `countFrom` 也是**读**：它把这个数值 flag 渲染进文案里
+    //（「投出去了 {n} 份简历」）。漏掉它会把只被 countFrom 消费的数值 flag
+    // 误报成「写了没人读」。
+    if (rule.countFrom !== undefined) usage.read.add(rule.countFrom)
+  }
+
+  for (const project of content.projects) {
+    walkCondition(project.requires, usage)
+    walkEffects(project.perInvest, usage)
+    walkEffects(project.onComplete, usage)
+    // 注意：progressFlag / completionFlag **不在这里算写**——
+    // 它们是引擎写的，静态扫描看不到，所以由 auditFlags 通过
+    // consumedByEngine 参数豁免掉。
   }
 
   return usage
@@ -136,9 +149,9 @@ export function flagUsageOf(content: MajorContent): FlagUsage {
 /**
  * 审计一份内容的 flag 使用情况。
  *
- * `consumedByEngine` 用来豁免**由引擎而非数据写入**的 flag（目前没有，
- * 阶段 2.2 的项目进度 flag 会用到它）：那些 flag 静态扫描看不到写入点，
- * 但引擎确实会写它，所以不该被报成「读了没人写」。
+ * `consumedByEngine` 用来豁免**由引擎而非数据写入**的 flag：
+ * 目前就是项目的 `progressFlag` / `completionFlag`（`investProject` 负责写它们）。
+ * 静态扫描看不到那些写入点，但引擎确实会写，所以不该被报成「读了没人写」。
  */
 export function auditFlagsOf(content: MajorContent, consumedByEngine: string[] = []): FlagAudit {
   const usage = flagUsageOf(content)
@@ -157,6 +170,7 @@ function allContent(): MajorContent {
     actions: GAME_DATA.actions,
     events: GAME_DATA.events,
     endings: GAME_DATA.endings,
+    projects: GAME_DATA.projects,
     summaryRules: GAME_DATA.summary.rules,
     weeklyEffects: GAME_DATA.config.weeklyEffects,
   }
@@ -170,6 +184,14 @@ function allContent(): MajorContent {
  * 两个都要跑。
  */
 export function auditFlags(majorId?: string): FlagAudit {
-  if (majorId === undefined) return auditFlagsOf(allContent())
-  return auditFlagsOf(contentFor(majorId))
+  const content = majorId === undefined ? allContent() : contentFor(majorId)
+
+  // 项目进度 / 完成 flag 是**引擎**写的（investProject 每次 +1 / 置 true），
+  // 静态扫描看不到写入点，所以必须豁免，否则会误报「读了却没人写」。
+  const engineWritten = content.projects.flatMap((project) => [
+    project.progressFlag,
+    project.completionFlag,
+  ])
+
+  return auditFlagsOf(content, engineWritten)
 }

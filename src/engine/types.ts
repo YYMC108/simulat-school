@@ -217,6 +217,61 @@ export interface Ending {
   majors?: MajorTags
 }
 
+/**
+ * 一个「作品 / 项目」—— 需要多周持续投入，攒够进度才算做出来。
+ *
+ * ── 为什么它是一个机制而不是一堆普通行动 ──
+ * 「多周投入 → 攒进度 → 完成 → 产出 flag」这套节奏和「一次行动、立刻结算」
+ * 是两种不同的东西：进度必须被记住，而且是**跨周、可见**的。
+ * 所以引擎提供一次这个机制（`getProjects()` / `investProject()`），
+ * 各专业只写「有哪些项目」——引擎里没有任何一个具体项目的影子。
+ *
+ * ── 进度为什么存在 flags 里 ──
+ * 刻意**不新增 `GameState` 字段**：`flags` 本来就是「记录发生过什么」的
+ * 纯 JSON 容器，进度就是一个数值 flag。这样存档约束（I8）零成本满足，
+ * 而进度 flag / 完成 flag 的 key 由数据声明（见下面两个字段），
+ * 引擎不需要任何命名约定。
+ *
+ * ⚠️ `requires` 里**不要用 `chance`**：引擎每次渲染项目列表都会求值它，
+ * 用 chance 会让「打开面板」这件事消耗随机数，破坏同种子复现。
+ */
+export interface ProjectDef {
+  id: string
+  name: string
+  description: string
+  /** 专属专业；不写 = 全专业共享（当前数据里项目都是各专业专属） */
+  majors?: MajorTags
+  /** 解锁条件（不满足则显示为「未解锁」） */
+  requires?: Condition
+  /** 每次投入消耗的行动力，默认 1 */
+  cost?: number
+  /** 需要投入几次才算完成 */
+  requiredInvestments: number
+  /** 每次投入的效果（通常是小幅属性收益） */
+  perInvest: Effect[]
+  /** 完成时的一次性效果（奖励 + 产出 flag） */
+  onComplete: Effect[]
+  /**
+   * 进度存放的数值 flag key。
+   * 由**引擎**写入（每次投入 +1），所以静态「死 flag」审计要把它算作「已写入」。
+   */
+  progressFlag: string
+  /** 完成标志 flag key（由引擎写入），供结局 / 回顾消费 */
+  completionFlag: string
+}
+
+/** 一个项目在当前状态下的样子，UI 只需要看这个 */
+export interface ProjectView {
+  project: ProjectDef
+  /** 已投入次数 */
+  progress: number
+  /** 需要投入几次 */
+  required: number
+  completed: boolean
+  /** 解锁条件是否满足（false → UI 应该置灰） */
+  unlocked: boolean
+}
+
 /* ============================================================
  * 6. 游戏状态与配置
  * ========================================================== */
@@ -284,6 +339,8 @@ export interface GameData {
   actions: ActionDef[]
   events: GameEvent[]
   endings: Ending[]
+  /** 可以多周投入做出来的作品 / 项目 */
+  projects: ProjectDef[]
   /** 结算回顾的规则与文案（见 §7） */
   summary: SummaryContent
 }

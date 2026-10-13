@@ -12,6 +12,8 @@ import type {
   GameState,
   LogEntry,
   MajorDef,
+  ProjectDef,
+  ProjectView,
   RNG,
   RunSummary,
   StatKey,
@@ -195,6 +197,35 @@ export class GameEngine {
     )
   }
 
+  /**
+   * 本专业可见的全部项目（含未解锁与已完成的），带进度。
+   *
+   * 这里**不过滤**未解锁/已完成的：界面需要显示「还没解锁」和
+   * 「进度 2/3」这类信息，直接过滤掉它们反而啥都展示不了。
+   * 能不能投入由 `investProject` 负责挡（fail fast）。
+   */
+  getProjects(): ProjectView[] {
+    const ctx = this.createContext()
+    return this.data.projects
+      .filter((project) => matchesMajor(project.majors, this.major.id))
+      .map((project) => {
+        const progress = this.projectProgress(project)
+        return {
+          project,
+          progress,
+          required: project.requiredInvestments,
+          completed: progress >= project.requiredInvestments,
+          unlocked: evaluate(project.requires, ctx),
+        }
+      })
+  }
+
+  /** 读一个项目的进度；没开始过就是 0 */
+  private projectProgress(project: ProjectDef): number {
+    const value = this.state.flags[project.progressFlag]
+    return typeof value === 'number' ? value : 0
+  }
+
   /* ---------------- 推进游戏 ---------------- */
 
   /** 执行一个行动 */
@@ -230,6 +261,70 @@ export class GameEngine {
     )
     const actionChanges = applyEffects(this.createContext(), action.effects)
     if (actionChanges.length > 0) actionEntry.changes = actionChanges
+
+    if (this.state.actionPoints <= 0) {
+      this.endWeek()
+    }
+
+    return this.buildResult(from)
+  }
+
+  /**
+   * 向一个项目投入一次：消耗行动力、进度 +1，攒满则完成并结算奖励。
+   *
+   * 语义刻意对齐 `takeAction` —— 同样的守卫顺序、同样的「先写日志、后补变化量」、
+   * 同样在行动力归零时结算本周。这样「做项目」和「做行动」在引擎里是同一种东西，
+   * UI 也能把它们并排放在「这周做点什么」里。
+   */
+  investProject(projectId: string): TurnResult {
+    const from = this.state.log.length
+
+    if (this.state.endingId !== null) {
+      throw new Error('游戏已经结束了')
+    }
+    if (this.pending !== null) {
+      throw new Error('还有未处理的事件，请先做出选择')
+    }
+
+    const project = this.data.projects.find((item) => item.id === projectId)
+    if (!project) throw new Error(`未知项目: ${projectId}`)
+    if (!matchesMajor(project.majors, this.major.id)) {
+      throw new Error(`项目不属于本专业(${this.major.id}): ${projectId}`)
+    }
+
+    const cost = project.cost ?? 1
+    if (cost > this.state.actionPoints) throw new Error('行动力不足')
+
+    const progress = this.projectProgress(project)
+    if (progress >= project.requiredInvestments) {
+      throw new Error(`项目已经完成了: ${projectId}`)
+    }
+    if (!evaluate(project.requires, this.createContext())) {
+      throw new Error(`项目条件不满足: ${projectId}`)
+    }
+
+    // 校验全部前置之后才开始改状态（一旦开始就不再回滚）
+    this.state.actionPoints -= cost
+    const next = progress + 1
+    this.state.flags[project.progressFlag] = next
+
+    // 进度写进日志文案：玩家不用回头翻面板也知道自己攒到哪了
+    const entry = pushLog(
+      this.state,
+      'action',
+      `〔第${this.state.week}周〕你投入到「${project.name}」（进度 ${next}/${project.requiredInvestments}）`,
+    )
+    const changes = applyEffects(this.createContext(), project.perInvest)
+    if (changes.length > 0) entry.changes = changes
+
+    if (next >= project.requiredInvestments) {
+      // 先置完成 flag，再结算 onComplete —— 这样 onComplete 里的 if 条件
+      // 能读到「已完成」，数据作者不必去猜执行顺序
+      this.state.flags[project.completionFlag] = true
+      const doneEntry = pushLog(this.state, 'system', `「${project.name}」完成了。`)
+      const doneChanges = applyEffects(this.createContext(), project.onComplete)
+      if (doneChanges.length > 0) doneEntry.changes = doneChanges
+    }
 
     if (this.state.actionPoints <= 0) {
       this.endWeek()

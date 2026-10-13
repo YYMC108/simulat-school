@@ -95,6 +95,26 @@ export const SUMMARY: SummaryContent = {
       text: '电脑中途坏过，有一阵子只能蹭实验室的机器',
     },
 
+    /* ---------------- 项目 / 作品（这学期造出来的东西） ---------------- */
+    {
+      requires: { type: 'flag', key: '项目_开源库_完成' },
+      kind: 'skill',
+      order: 38,
+      // 必须标专业：这两个 flag 由计算机的项目产出，
+      // 忘了标就会让文科「读一个自己永远写不出来的 flag」——
+      // 静态死 flag 审计会立刻抓出来（确实抓出来了）
+      majors: ['computer'],
+      text: '自己写的小库被陌生的开发者用起来了',
+    },
+    {
+      requires: { type: 'flag', key: '项目_算法题单_完成' },
+      kind: 'skill',
+      order: 39,
+      countFrom: '项目_算法题单_进度',
+      majors: ['computer'],
+      text: '把那份躺了半年的题单啃完了，一共 {n} 次投入',
+    },
+
     /* ---------------- 人际 / 情感 ---------------- */
     {
       requires: { type: 'flag', key: '纸条成功' },

@@ -85,11 +85,28 @@ export const ENDINGS: Ending[] = [
     majors: ['computer'],
     // social 阈值放宽到 60：宿舍生活和随机事件会持续往上推社交，
     // 原来的 50 在实际模拟里几乎达不到（社团招新、聚餐、谈心动不动就 +6~+10）
+    //
+    // 条件写成 any 的**两条路**：纯靠技能硬顶，或者真的把开源项目做出来了。
+    // 第二条路严格更宽松（技能门槛 80 → 65），所以不会让这个结局变得更难拿；
+    // 而它对「经典风格」是惰性的 —— 那些风格不投项目，完成 flag 永远为假。
     requires: {
-      type: 'all',
+      type: 'any',
       conditions: [
-        { type: 'stat', key: 'skill', op: '>=', value: 80 },
-        { type: 'stat', key: 'social', op: '<', value: 60 },
+        {
+          type: 'all',
+          conditions: [
+            { type: 'stat', key: 'skill', op: '>=', value: 80 },
+            { type: 'stat', key: 'social', op: '<', value: 60 },
+          ],
+        },
+        {
+          type: 'all',
+          conditions: [
+            { type: 'flag', key: '项目_开源库_完成' },
+            { type: 'stat', key: 'skill', op: '>=', value: 65 },
+            { type: 'stat', key: 'social', op: '<', value: 60 },
+          ],
+        },
       ],
     },
   },

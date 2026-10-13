@@ -1,4 +1,4 @@
-import type { ActionDef, Ending, GameEvent, SummaryRule } from '../engine/types'
+import type { ActionDef, Ending, GameEvent, ProjectDef, SummaryRule } from '../engine/types'
 
 /**
  * 汉语言文学专业内容包 —— 「计算机」之外的第二条人生。
@@ -543,6 +543,23 @@ export const LITERATURE_SUMMARY_RULES: SummaryRule[] = [
     text: '前前后后写完了 {n} 篇东西，大多数只有自己读过',
     majors: ['literature'],
   },
+
+  /* ---------------- 项目 / 作品（真的写完了整本） ---------------- */
+  {
+    requires: { type: 'flag', key: '项目_诗集_完成' },
+    kind: 'skill',
+    order: 24,
+    text: '把那沓断断续续的诗攒成了一本，自己排版、自己印了十册',
+    majors: ['literature'],
+  },
+  {
+    requires: { type: 'flag', key: '项目_长篇_完成' },
+    kind: 'skill',
+    order: 26,
+    countFrom: '项目_长篇_进度',
+    text: '一部长篇前后投入了 {n} 次，结尾改了七遍',
+    majors: ['literature'],
+  },
 ]
 
 /* ============================================================
@@ -564,8 +581,15 @@ export const LITERATURE_ENDINGS: Ending[] = [
     requires: {
       type: 'all',
       conditions: [
-        // 入口只有 ev_lit_editor_dm 一个，但它本来就要求技能过了 45 才签得下来
-        { type: 'flag', key: '连载邀约' },
+        // 两条路通往同一个结局：编辑找上门（事件线），
+        // 或者你自己把长篇写完了（项目线）——「项目收益通向专业结局」就体现在这里
+        {
+          type: 'any',
+          conditions: [
+            { type: 'flag', key: '连载邀约' },
+            { type: 'flag', key: '项目_长篇_完成' },
+          ],
+        },
         // 再要一道门槛：签约是手艺活，光有人问不算
         { type: 'stat', key: 'skill', op: '>=', value: 50 },
       ],
@@ -582,11 +606,77 @@ export const LITERATURE_ENDINGS: Ending[] = [
     requires: {
       type: 'all',
       conditions: [
-        // 校刊过稿或征文获奖，同一个 flag 两条路
-        { type: 'flag', key: '发表过作品' },
+        // 校刊过稿 / 征文获奖（事件线），或者诗集完成（项目线）
+        {
+          type: 'any',
+          conditions: [
+            { type: 'flag', key: '发表过作品' },
+            { type: 'flag', key: '项目_诗集_完成' },
+          ],
+        },
         { type: 'stat', key: 'skill', op: '>=', value: 45 },
       ],
     },
     majors: ['literature'],
+  },
+]
+
+/* ============================================================
+ * 五、专属项目 / 作品（2 个）
+ *
+ * ── 这才是「不同专业」真正拉开差距的地方 ──
+ * 起始属性差几点，三周就被抹平了；但「你花 3–4 次行动力做出了什么东西」
+ * 不会 —— 它同时改变了终局属性和你配得上的结局。
+ *
+ * 两个项目刻意做成**不同性格**：
+ *   · 诗集  门槛低（技能 30）、周期短（3 次），收益偏心情 —— 随手就能开始
+ *   · 长篇  门槛高（技能 45）、周期长（4 次），收益偏学业与技能 —— 需要下决心
+ * 于是「先写短的还是直接啃长的」本身就是一个取舍。
+ *
+ * 完成时引擎会写入 `completionFlag`，它被结局和回顾规则消费（见文件上方）。
+ * ========================================================== */
+export const LITERATURE_PROJECTS: ProjectDef[] = [
+  {
+    id: 'proj_poetry',
+    name: '攒一本自己的诗集',
+    description: '把这几年断断续续写的东西挑一挑，凑够一本，自己排版印出来',
+    majors: ['literature'],
+    // 门槛很低：写过的稿子够十来篇就能开始攒
+    requires: { type: 'stat', key: 'skill', op: '>=', value: 30 },
+    requiredInvestments: 3,
+    perInvest: [
+      { type: 'stat', key: 'skill', delta: 3 },
+      // 挑自己的旧稿是最容易自我怀疑的环节
+      { type: 'stat', key: 'mood', delta: -1 },
+    ],
+    onComplete: [
+      { type: 'stat', key: 'skill', delta: 5 },
+      { type: 'stat', key: 'mood', delta: 10 },
+      { type: 'log', text: '十个印本摊在桌上，你给每一本都写了不同的赠言。' },
+    ],
+    progressFlag: '项目_诗集_进度',
+    completionFlag: '项目_诗集_完成',
+  },
+  {
+    id: 'proj_longform',
+    name: '开始写一部长篇',
+    description: '先不管能不能写完，每天固定写两千字，写完为止',
+    majors: ['literature'],
+    requires: { type: 'stat', key: 'skill', op: '>=', value: 45 },
+    requiredInvestments: 4,
+    perInvest: [
+      { type: 'stat', key: 'skill', delta: 3 },
+      // 长篇写作会反过来要求你查资料、补知识结构
+      { type: 'stat', key: 'academic', delta: 1 },
+      { type: 'stat', key: 'mood', delta: -2 },
+    ],
+    onComplete: [
+      { type: 'stat', key: 'skill', delta: 6 },
+      { type: 'stat', key: 'academic', delta: 3 },
+      { type: 'stat', key: 'mood', delta: 6 },
+      { type: 'log', text: '敲下「全文完」三个字的时候，宿舍已经熄灯很久了。' },
+    ],
+    progressFlag: '项目_长篇_进度',
+    completionFlag: '项目_长篇_完成',
   },
 ]

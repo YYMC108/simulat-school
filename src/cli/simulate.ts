@@ -32,7 +32,16 @@ import { matchesMajor } from '../engine/majors'
 import { STAT_LABELS, STAT_ORDER } from '../engine/effects'
 import { mulberry32, pickOne, pickWeighted } from '../engine/rng'
 import { padEndWidth, padStartWidth } from './text'
-import type { ActionDef, Effect, Ending, GameEvent, Stats, SummaryRule } from '../engine/types'
+import type {
+  ActionDef,
+  Effect,
+  Ending,
+  GameData,
+  GameEvent,
+  ProjectDef,
+  Stats,
+  SummaryRule,
+} from '../engine/types'
 
 // STAT_ORDER 现在从 engine/effects 统一导出（CLI 和 Web 共用一份顺序）
 
@@ -49,18 +58,22 @@ export const STRATEGIES: Record<string, Record<string, number>> = {
   均衡派: {
     study: 4, socialize: 4, exercise: 3, rest: 3, parttime: 3, code: 4, job_hunt: 3,
     write: 3, read_lit: 4,
+    __project: 0,
   },
   学霸: {
     study: 9, socialize: 1, exercise: 2, rest: 2, parttime: 2, code: 3, job_hunt: 2,
     write: 3, read_lit: 5,
+    __project: 0,
   },
   技术宅: {
     study: 3, socialize: 1, exercise: 2, rest: 2, parttime: 2, code: 9, job_hunt: 4,
     write: 9, read_lit: 2,
+    __project: 0,
   },
   社交达人: {
     study: 2, socialize: 9, exercise: 2, rest: 2, parttime: 2, code: 2, job_hunt: 1,
     write: 2, read_lit: 2,
+    __project: 0,
   },
   躺平: {
     study: 1, socialize: 3, exercise: 2, rest: 9, parttime: 2, code: 1, job_hunt: 1,
@@ -71,8 +84,28 @@ export const STRATEGIES: Record<string, Record<string, number>> = {
     // 「学业崩塌」这条对文科生完全真实的失败路线就没人代表了。
     // 摆烂的文科生就是既不读书也不动笔 —— 这个风格必须存在。
     write: 0, read_lit: 0,
+    __project: 0,
   },
-  随机: {},
+  随机: { __project: 0 },
+
+  /**
+   * 作品派：这学期就是想做出点东西来。
+   *
+   * 为什么单独加一个风格，而不是给上面 6 个风格都加上项目权重：
+   *   项目是**新机制**。让老风格继续完全不投项目（`__project: 0`），
+   *   金标指纹就能继续证明「加机制没有扰动原有平衡」——
+   *   上面 6 行的收益分布至今和引入项目之前逐位一致。
+   *   而项目的可达性、平衡影响与「完成 flag 能不能被结局消费」，
+   *   全部由这一个风格来覆盖。
+   *
+   * `__project` 是**opt-in** 的：没写这个 key 的风格一律不投项目
+   *（默认值是 0，见 playOne），所以新增风格不会意外改变老风格的随机流。
+   */
+  作品派: {
+    study: 3, socialize: 2, exercise: 2, rest: 3, parttime: 2, code: 4, job_hunt: 1,
+    write: 5, read_lit: 3,
+    __project: 6,
+  },
 }
 
 /* ---------------- 单个专业的可见内容 ---------------- */
@@ -82,6 +115,7 @@ export interface MajorContent {
   actions: ActionDef[]
   events: GameEvent[]
   endings: Ending[]
+  projects: ProjectDef[]
   summaryRules: SummaryRule[]
   /**
    * 每周固定衰减/结算。
@@ -98,6 +132,7 @@ export function contentFor(majorId: string): MajorContent {
     actions: GAME_DATA.actions.filter((item) => matchesMajor(item.majors, majorId)),
     events: GAME_DATA.events.filter((item) => matchesMajor(item.majors, majorId)),
     endings: GAME_DATA.endings.filter((item) => matchesMajor(item.majors, majorId)),
+    projects: GAME_DATA.projects.filter((item) => matchesMajor(item.majors, majorId)),
     summaryRules: GAME_DATA.summary.rules.filter((item) => matchesMajor(item.majors, majorId)),
     // 每周固定结算不区分专业（它是全专业共通的生活成本），所以原样带过来
     weeklyEffects: GAME_DATA.config.weeklyEffects,
@@ -114,19 +149,36 @@ export interface SimOutcome {
   seenEvents: string[]
   /** 本局结算回顾的文案（渲染后，`{n}` 已替换）—— 用于检查回顾规则有没有死规则 */
   summaryLines: string[]
+  /** 本局完成的项目 id —— 用于检查有没有「死项目」 */
+  completedProjects: string[]
 }
 
-/** 用指定决策风格跑一局。seed 固定则结果固定。不传 majorId 则用默认专业 */
+/** playOne 的一个候选动作：一次行动，或者向某个项目投一次 */
+interface Candidate {
+  /** 仅用于调试与权重查表，如 `code` / `project:proj_poetry` */
+  label: string
+  weight: number
+  run: () => void
+}
+
+/**
+ * 用指定决策风格跑一局。seed 固定则结果固定。不传 majorId 则用默认专业。
+ *
+ * `data` 默认就是 GAME_DATA；传别的内容集只为一件事：
+ * 「把一个专业单独拎出来跑，结果必须和它在完整数据集里一模一样」——
+ * 这是「加专业只写数据」最直接的判据（见 tests 里的差分不变量）。
+ */
 export function playOne(
   seed: number,
   weights: Record<string, number>,
   majorId?: string,
+  data: GameData = GAME_DATA,
 ): SimOutcome {
-  const engine = new GameEngine(
-    GAME_DATA,
-    majorId === undefined ? { seed } : { seed, majorId },
-  )
+  const engine = new GameEngine(data, majorId === undefined ? { seed } : { seed, majorId })
   const rng = mulberry32(seed * 7919 + 13)
+  // 项目投入是 opt-in：没写 __project 的风格完全不投项目。
+  // 这样「老风格」的候选列表里连项目都不会出现，它们的随机流保持逐位不变。
+  const projectWeight = weights['__project'] ?? 0
   let guard = 0
 
   while (!engine.isEnded() && guard++ < 5000) {
@@ -141,11 +193,33 @@ export function playOne(
       continue
     }
 
-    const actions = engine.availableActions()
+    const candidates: Candidate[] = engine.availableActions().map((action) => ({
+      label: action.id,
+      weight: weights[action.id] ?? 1,
+      run: () => {
+        engine.takeAction(action.id)
+      },
+    }))
+
+    if (projectWeight > 0) {
+      const actionPoints = engine.getState().actionPoints
+      for (const view of engine.getProjects()) {
+        if (!view.unlocked || view.completed) continue
+        if ((view.project.cost ?? 1) > actionPoints) continue
+        candidates.push({
+          label: `project:${view.project.id}`,
+          weight: weights[`project:${view.project.id}`] ?? projectWeight,
+          run: () => {
+            engine.investProject(view.project.id)
+          },
+        })
+      }
+    }
+
     // 权重随机：避免机械化的唯一最优解，同时让每种风格有稳定倾向
-    const picked = pickWeighted(actions, (action) => weights[action.id] ?? 1, rng)
+    const picked = pickWeighted(candidates, (candidate) => candidate.weight, rng)
     if (!picked) break
-    engine.takeAction(picked.id)
+    picked.run()
   }
 
   return {
@@ -156,6 +230,24 @@ export function playOne(
     // 但我们关心的是「遇到哪些事件」，不是「触发了几次」
     seenEvents: [...new Set(engine.getState().seenEvents)],
     summaryLines: engine.getSummary().lines.map((line) => line.text),
+    completedProjects: engine
+      .getProjects()
+      .filter((view) => view.completed)
+      .map((view) => view.project.id),
+  }
+}
+
+/** 把某个专业的内容单独拎出来，拼成一份「只有它」的数据集（差分不变量用） */
+export function isolateMajor(majorId: string): GameData {
+  const visible = contentFor(majorId)
+  return {
+    ...GAME_DATA,
+    majors: GAME_DATA.majors.filter((major) => major.id === majorId),
+    actions: visible.actions,
+    events: visible.events,
+    endings: visible.endings,
+    projects: visible.projects,
+    summary: { ...GAME_DATA.summary, rules: visible.summaryRules },
   }
 }
 
@@ -169,6 +261,13 @@ export interface ContentMetrics {
   games: number
   /** 从未被触发的随机池事件（死事件，和「死结局」一个道理） */
   deadEvents: { id: string; title: string }[]
+  /**
+   * 从未被**完成**过的项目（死项目）。
+   *
+   * 和死事件同构：一个写了却永远做不出来的项目，玩家永远看不到它的完成奖励
+   * 和那句完成文案 —— 它只是白占着代码，还让人以为「这条路能走」。
+   */
+  deadProjects: { id: string; name: string }[]
   /** 单事件最高出现率（0~1）。太高 = 每局必见 = 重复感的来源 */
   maxEventRate: number
   hottestEventId: string
@@ -217,6 +316,7 @@ function simulateMajor(
 
   // 内容度量用
   const eventCounts = new Map<string, number>()
+  const completedProjects = new Set<string>()
   const seenPerGame: string[][] = []
   const gameStrategy: string[] = []
   const summaryTexts = new Set<string>()
@@ -243,6 +343,7 @@ function simulateMajor(
         eventCounts.set(id, (eventCounts.get(id) ?? 0) + 1)
       }
       for (const text of outcome.summaryLines) summaryTexts.add(text)
+      for (const id of outcome.completedProjects) completedProjects.add(id)
     }
 
     statTotals.set(name, totals)
@@ -285,10 +386,16 @@ function simulateMajor(
     .filter((event) => !eventCounts.has(event.id))
     .map((event) => ({ id: event.id, title: event.title }))
 
+  // 死项目同理：只在本专业可见的项目里找
+  const deadProjects = visible.projects
+    .filter((project) => !completedProjects.has(project.id))
+    .map((project) => ({ id: project.id, name: project.name }))
+
   const content: ContentMetrics = {
     eventCounts,
     games: totalGames,
     deadEvents,
+    deadProjects,
     maxEventRate,
     hottestEventId,
     repetition: overlapPairs > 0 ? overlapSum / overlapPairs : 0,
@@ -446,6 +553,17 @@ function renderContentHealth(major: MajorReport): void {
     console.log(`  结算回顾规则:          ⚠ ${totalRules - deadRules.length}/${totalRules}，以下从未触发：`)
     for (const rule of deadRules) {
       console.log(`                             - ${rule.text}`)
+    }
+  }
+
+  if (visible.projects.length > 0) {
+    if (content.deadProjects.length === 0) {
+      console.log(`  死项目:                ✅ 无（${visible.projects.length} 个项目都被完成过）`)
+    } else {
+      console.log(`  死项目:                ⚠ 有 ${content.deadProjects.length} 个从未被完成：`)
+      for (const project of content.deadProjects) {
+        console.log(`                             - ${project.name} (${project.id})`)
+      }
     }
   }
 
