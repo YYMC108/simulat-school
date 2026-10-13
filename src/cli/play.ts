@@ -205,15 +205,39 @@ async function main(): Promise<void> {
   // 但之前根本没办法把种子传回来 —— 这个承诺是空的。补上。
   const seedFlagIndex = process.argv.indexOf('--seed')
   const parsedSeed = Number.parseInt(process.argv[seedFlagIndex + 1] ?? '', 10)
-  const engine = new GameEngine(
-    GAME_DATA,
-    Number.isInteger(parsedSeed) ? { seed: parsedSeed } : {},
-  )
+
+  // 支持 --major <id>：专业必须能被玩家指定，否则「多专业」就只是个摆设。
+  // 不传则用数据里的第一个专业（默认值由引擎/数据决定，CLI 不自己猜）
+  const majorFlagIndex = process.argv.indexOf('--major')
+  const majorArg = process.argv[majorFlagIndex + 1]
+
+  let engine: GameEngine
+  try {
+    engine = new GameEngine(GAME_DATA, {
+      ...(Number.isInteger(parsedSeed) ? { seed: parsedSeed } : {}),
+      ...(majorFlagIndex !== -1 && majorArg !== undefined ? { majorId: majorArg } : {}),
+    })
+  } catch (error) {
+    // 传错专业时给一份可选清单，而不是丢一个堆栈给玩家
+    console.error(c.red(`启动失败：${(error as Error).message}`))
+    console.error(
+      c.dim(
+        `可选专业：${GAME_DATA.majors.map((m) => `${m.id}（${m.name}）`).join(' / ')}`,
+      ),
+    )
+    process.exitCode = 1
+    return
+  }
+
+  // 开场文案里的身份与周数都从数据读 —— CLI 里不该出现写死的专业名，
+  // 否则加一个新专业就会发现「命令行还是说你是计算机专业」
+  const { totalWeeks, actionPointsPerWeek } = GAME_DATA.config
+  const major = engine.getMajor()
 
   console.log('\n🎓 大学生活模拟器 —— 命令行版')
   console.log('─'.repeat(52))
-  console.log('你是计算机专业大三学生。本学期 16 周，每周 3 点行动力，')
-  console.log('也就是一共只有 48 次「认真做一件事」的机会。')
+  console.log(`你是${major.identity}。本学期 ${totalWeeks} 周，每周 ${actionPointsPerWeek} 点行动力，`)
+  console.log(`也就是一共只有 ${totalWeeks * actionPointsPerWeek} 次「认真做一件事」的机会。`)
   console.log('')
   console.log('六项属性互相牵制，你不可能全都拿到 —— 必须做取舍。')
   console.log('每周用完行动力后进入下一周，并可能触发一个事件让你做选择。')
@@ -223,9 +247,9 @@ async function main(): Promise<void> {
   console.log('（结算里那一行只报告这笔固定衰减；你的行动效果显示在自己的行上。）')
   console.log('')
   console.log('怎么玩：输入选项前面的数字，按回车。')
-  console.log('复现某局：pnpm play -- --seed <种子>')
+  console.log(`复现某局：pnpm play -- --seed <种子> [--major ${GAME_DATA.majors.map((m) => m.id).join('|')}]`)
   console.log('─'.repeat(52))
-  console.log(`随机种子: ${engine.getSeed()}`)
+  console.log(`专业: ${major.name}（${major.id}）　随机种子: ${engine.getSeed()}`)
 
   try {
     while (!engine.isEnded()) {

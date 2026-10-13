@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { STRATEGIES, deadSummaryRules, playOne, simulate } from '../src/cli/simulate'
+import type { MajorContent } from '../src/cli/simulate'
+import { auditFlags, auditFlagsOf, flagUsageOf } from '../src/cli/audit'
 import { GAME_DATA } from '../src/data/index'
 import { GameEngine } from '../src/engine/engine'
 import { evaluate } from '../src/engine/conditions'
@@ -39,16 +41,42 @@ function chooseFirstEnabled(engine: GameEngine): void {
 }
 
 /**
- * 一整轮完整模拟（6 种风格 × 120 局 = 720 局）的结果。
+ * 一整轮完整模拟（6 种风格 × 120 局 × 每个专业）的结果。
  *
  * 三个「死 XX」不变量（死结局 / 死事件 / 死规则）吃的都是同一份结果，
- * 所以缓存起来只跑一次 —— 否则测试要跑 2160 局，时间白翻三倍。
+ * 所以缓存起来只跑一次 —— 否则测试时间白翻几倍。
  * `simulate` 是种子确定的，缓存不影响正确性，也不会有 flaky。
  */
 let fullReport: ReturnType<typeof simulate> | null = null
 function runFullSimulation(): ReturnType<typeof simulate> {
   fullReport ??= simulate(120)
   return fullReport
+}
+
+/**
+ * 把「按专业的死内容」摊平成人能读的清单。
+ *
+ * 为什么要摊平：死内容的第一手信息是「哪个专业 + 哪条内容」。
+ * 只看一条全局的「有 3 个事件从未触发」是查不出问题的 ——
+ * 因为一个计算机专属事件对文科来说本来就该是死的，反之亦然。
+ */
+function deadContentOf(report: ReturnType<typeof simulate>) {
+  const deadEndings: string[] = []
+  const deadEvents: string[] = []
+  const deadRules: string[] = []
+
+  for (const major of report.majors) {
+    for (const ending of major.deadEndings) {
+      deadEndings.push(`${major.majorId}: ${ending.title}(${ending.id})`)
+    }
+    for (const event of major.content.deadEvents) {
+      deadEvents.push(`${major.majorId}: ${event.title}(${event.id})`)
+    }
+    for (const rule of deadSummaryRules(major.content.summaryTexts, major.majorId)) {
+      deadRules.push(`${major.majorId}: ${rule.text}`)
+    }
+  }
+  return { deadEndings, deadEvents, deadRules }
 }
 
 /* ============================================================
@@ -460,14 +488,26 @@ describe('内容数据合法性', () => {
    * 一个永远触发不到的结局就是死代码 —— 而且它藏得很深，
    * 人肉试玩几十局根本发现不了（这个项目里就真的踩过一次）。
    *
+   * 阶段 2 起这条不变量**按专业**成立：每个专业自己看得见的那些结局
+   * 都必须被玩出来。专属结局被通用结局「饿死」是这里最容易犯的错 ——
+   * 优先级排在别人后面，就永远轮不到它。
+   *
    * 因为整个模拟是种子确定的，所以这条测试不会 flaky；
    * 反过来，如果调整数值导致某个结局变得不可达，它会立刻告诉你。
    */
-  it('所有结局都能被玩出来（没有死结局）', () => {
+  it('所有结局都能被玩出来（没有死结局，且按专业成立）', () => {
     const report = runFullSimulation()
+    const { deadEndings } = deadContentOf(report)
+
+    // 先保证这条测试不是在空转：模拟必须真的覆盖了每一个专业
     expect(
-      report.deadEndings.map((ending) => `${ending.title}(${ending.id})`),
-      '以下结局在所有决策风格下都从未触发，检查它们的触发条件是否过严',
+      report.majors.map((major) => major.majorId).sort(),
+      '模拟没有覆盖全部专业，下面的「无死结局」就是空转',
+    ).toEqual(GAME_DATA.majors.map((major) => major.id).sort())
+
+    expect(
+      deadEndings,
+      '以下「专业 + 结局」在所有决策风格下都从未触发，检查它们的触发条件是否过严',
     ).toEqual([])
   })
 
@@ -475,12 +515,17 @@ describe('内容数据合法性', () => {
    * 和「没有死结局」同构的不变量，只是对象换成事件。
    * 一个写进数据里却永远触发不到的事件，跟一段死代码没有区别 ——
    * 它只会平白占着权重、让别的本可以出现的事件更难出现。
+   *
+   * 同样按专业：共享事件必须在**每个**专业里都能触发到，
+   * 专属事件必须在**它自己那个**专业里能触发到。
    */
-  it('所有随机事件都能被触发（没有死事件）', () => {
+  it('所有随机事件都能被触发（没有死事件，且按专业成立）', () => {
     const report = runFullSimulation()
+    const { deadEvents } = deadContentOf(report)
+
     expect(
-      report.content.deadEvents.map((event) => `${event.title}(${event.id})`),
-      '以下事件在所有决策风格下都从未触发，检查它们的触发条件是否过严（或状态触发事件的阈值是否根本达不到）',
+      deadEvents,
+      '以下「专业 + 事件」在所有决策风格下都从未触发，检查触发条件是否过严（或状态触发事件的阈值是否根本达不到）',
     ).toEqual([])
   })
 
@@ -489,12 +534,105 @@ describe('内容数据合法性', () => {
    * 一条写了却永远触发不到的回顾就是一段死文案 ——
    * 玩家看不到它，而它却占着「本可以放别的话」的位置。
    */
-  it('结算回顾的每条规则都可能被触发（没有死规则）', () => {
+  it('结算回顾的每条规则都可能被触发（没有死规则，且按专业成立）', () => {
     const report = runFullSimulation()
+    const { deadRules } = deadContentOf(report)
+
     expect(
-      deadSummaryRules(report.content.summaryTexts).map((rule) => rule.text),
-      '以下回顾规则在所有决策风格下都从未触发，检查条件是否过严（尤其是属性阈值类规则）',
+      deadRules,
+      '以下「专业 + 回顾规则」在所有决策风格下都从未触发，检查条件是否过严（尤其是属性阈值类规则）',
     ).toEqual([])
+  })
+})
+
+/* ============================================================
+ * 死 flag（静态审计）
+ *
+ * 和「死结局 / 死事件 / 死规则」同构的第四个不变量，但它**不需要跑模拟**：
+ * 静态就能确定「有没有人读这个 flag」。
+ * ========================================================== */
+
+describe('内容数据合法性：死 flag（静态审计）', () => {
+  /** 把全部内容当成一个切片（用于「扫描范围是否有效」的自检） */
+  const everyContent: MajorContent = {
+    actions: GAME_DATA.actions,
+    events: GAME_DATA.events,
+    endings: GAME_DATA.endings,
+    summaryRules: GAME_DATA.summary.rules,
+    weeklyEffects: GAME_DATA.config.weeklyEffects,
+  }
+
+  it('审计器本身有效：能同时抓出「写了没人读」和「读了没人写」', () => {
+    // 这一段是刻意的反向验证：如果下面两条不变量因为审计器失灵而永远通过，
+    // 那么它们就是装饰品。这里用一个最小样例证明审计器真的会报错。
+    const content: MajorContent = {
+      actions: [
+        {
+          id: 'act',
+          label: '行动',
+          description: '描述',
+          cost: 1,
+          effects: [{ type: 'setFlag', key: '只写不读', value: true }],
+        },
+      ],
+      events: [
+        {
+          id: 'ev',
+          title: '事件',
+          text: '正文',
+          category: 'random',
+          requires: { type: 'flag', key: '只读不写' },
+          effects: [{ type: 'addFlag', key: '有写也有读', delta: 1 }],
+        },
+      ],
+      endings: [
+        {
+          id: 'end',
+          title: '结局',
+          text: '正文',
+          priority: 1,
+          requires: { type: 'flag', key: '有写也有读' },
+        },
+      ],
+      summaryRules: [],
+      weeklyEffects: [],
+    }
+
+    const audit = auditFlagsOf(content)
+    expect(audit.writtenNeverRead).toEqual(['只写不读'])
+    expect(audit.readNeverWritten).toEqual(['只读不写'])
+  })
+
+  it('扫描范围本身是有效的（数据不为空，否则两条不变量等于空转）', () => {
+    const usage = flagUsageOf(everyContent)
+    expect(usage.written.size).toBeGreaterThanOrEqual(10)
+    expect(usage.read.size).toBeGreaterThanOrEqual(10)
+  })
+
+  it('全局：每个 flag 都是有写有读的（没有死 flag）', () => {
+    const audit = auditFlags()
+    expect(
+      audit.writtenNeverRead,
+      '以下 flag 被写入、但没有任何条件读它 —— 它是死数据，玩家永远感知不到',
+    ).toEqual([])
+    expect(
+      audit.readNeverWritten,
+      '以下 flag 被条件读取、但没有任何地方写它 —— 那些条件是永远不可能成立的分支',
+    ).toEqual([])
+  })
+
+  it('按专业：每个专业自己写的 flag 自己读，不依赖另一个专业', () => {
+    for (const major of GAME_DATA.majors) {
+      const audit = auditFlags(major.id)
+      expect(
+        audit.writtenNeverRead,
+        `专业「${major.id}」写了这些 flag 却没人读（在别的专业里读也算漏 —— 它对本科就是死的）`,
+      ).toEqual([])
+      expect(
+        audit.readNeverWritten,
+        `专业「${major.id}」读了这些 flag 却没人写（那个条件对本科永远不成立）`,
+      ).toEqual([])
+    }
   })
 })
 
@@ -780,9 +918,16 @@ describe('专业：金标指纹（引入专业维度不得改变任何一局）'
     const mismatches: string[] = []
 
     for (const line of GOLDEN_FINGERPRINT) {
-      const [strategy, seedRaw, , , ,] = line.split('|')
-      const weights = STRATEGIES[strategy as string] ?? {}
-      const outcome = playOne(Number(seedRaw), weights)
+      const [strategy, seedRaw] = line.split('|')
+      // 找不到风格就明确报错，而不是静默退化成「所有行动等权」——
+      // 后者会让指纹对不上，却给出一个完全看不懂的失败原因
+      const weights = STRATEGIES[strategy as string]
+      expect(
+        weights,
+        `金标指纹里的风格「${strategy}」在 STRATEGIES 里找不到了（改风格名会让历史对局失去参照）`,
+      ).toBeDefined()
+
+      const outcome = playOne(Number(seedRaw), weights!)
 
       const got = [
         strategy,

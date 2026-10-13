@@ -54,6 +54,8 @@ export const ENDINGS: Ending[] = [
     title: '拿到大厂 Offer',
     text: '寒假前，你收到了大厂的实习转正意向书。回头看，那些通宵调 bug 的夜晚都值了。',
     priority: 50,
+    // 计算机专属：这条路线靠的是「技能 + 实习 Offer」，且叙事本身绑定技术岗
+    majors: ['computer'],
     requires: {
       type: 'all',
       conditions: [
@@ -80,6 +82,7 @@ export const ENDINGS: Ending[] = [
     title: '技术宅的胜利',
     text: '你没怎么管成绩，但你的开源项目在 GitHub 上拿了 500 星，还收到了几个面试邀请。',
     priority: 70,
+    majors: ['computer'],
     // social 阈值放宽到 60：宿舍生活和随机事件会持续往上推社交，
     // 原来的 50 在实际模拟里几乎达不到（社团招新、聚餐、谈心动不动就 +6~+10）
     requires: {

@@ -1,10 +1,10 @@
 /**
  * 数值平衡模拟器。
  *
- *   pnpm simulate                每种风格 200 局
+ *   pnpm simulate                每个专业 × 每种风格 200 局
  *   pnpm simulate -- --games 1000
  *
- * 它会用几种「决策风格」各跑大量对局，然后输出：
+ * 它会用几种「决策风格」各跑大量对局，然后**按专业**输出：
  *   1. 结局 × 风格的命中率矩阵
  *   2. 每种风格的终局平均属性
  *   3. 从来没被触发过的结局  ← 最重要的输出
@@ -13,8 +13,11 @@
  * 第 3 点特别关键：一个「永远触发不到的结局」就是一段死代码。
  * 人肉试玩几十局是发现不了的，但跑几千局一眼就能看出来。
  *
- * 第 4 点是阶段 1（内容扩充）的尺子：跨局重复度衡量「玩家会不会玩两局就腻」，
- * 死事件和「死结局」同理，冷热排行告诉你重复感具体来自哪几个事件。
+ * 为什么必须**按专业**统计（阶段 2 之后）：
+ *   内容现在带 `majors` 标签。如果只跑全局统计，文科的专属事件会被别的专业
+ *   触发的次数掩盖 —— 一个「只有计算机能触发」的事件在全局统计里看着很正常，
+ *   但它对文科来说就是死内容。所以统计口径必须降到专业维度：
+ *   **每个专业只统计自己看得见的内容，并且这些内容必须自己都能触发到。**
  *
  * 整个模拟是「种子确定」的 —— 同样的 --games 永远得到同样的结果，
  * 所以这个逻辑可以直接被单元测试断言（见 tests/engine.test.ts）。
@@ -25,29 +28,86 @@ import process from 'node:process'
 
 import { GAME_DATA } from '../data/index'
 import { GameEngine } from '../engine/engine'
+import { matchesMajor } from '../engine/majors'
 import { STAT_LABELS, STAT_ORDER } from '../engine/effects'
 import { mulberry32, pickOne, pickWeighted } from '../engine/rng'
 import { padEndWidth, padStartWidth } from './text'
-import type { Stats } from '../engine/types'
+import type { ActionDef, Effect, Ending, GameEvent, Stats, SummaryRule } from '../engine/types'
 
 // STAT_ORDER 现在从 engine/effects 统一导出（CLI 和 Web 共用一份顺序）
 
 /**
  * 决策风格：给每个行动一个偏好权重（没列出的默认 1，填 0 表示不会主动选）。
  * 这几种风格覆盖了现实中大学生的主要「玩法」。
+ *
+ * 同一个风格对两个专业的行动各给一份权重：这样「学霸」在文科里是
+ * 「多读书多写」，在计算机里是「多自习多写代码」，风格语义是连续的。
+ * 注意**风格名不要改** —— 金标指纹（tests/golden-fingerprint.ts）是按名字索引的，
+ * 改名会让历史对局失去参照。
  */
 export const STRATEGIES: Record<string, Record<string, number>> = {
-  均衡派: { study: 4, socialize: 4, exercise: 3, rest: 3, parttime: 3, code: 4, job_hunt: 3 },
-  学霸: { study: 9, socialize: 1, exercise: 2, rest: 2, parttime: 2, code: 3, job_hunt: 2 },
-  技术宅: { study: 3, socialize: 1, exercise: 2, rest: 2, parttime: 2, code: 9, job_hunt: 4 },
-  社交达人: { study: 2, socialize: 9, exercise: 2, rest: 2, parttime: 2, code: 2, job_hunt: 1 },
-  躺平: { study: 1, socialize: 3, exercise: 2, rest: 9, parttime: 2, code: 1, job_hunt: 1 },
+  均衡派: {
+    study: 4, socialize: 4, exercise: 3, rest: 3, parttime: 3, code: 4, job_hunt: 3,
+    write: 3, read_lit: 4,
+  },
+  学霸: {
+    study: 9, socialize: 1, exercise: 2, rest: 2, parttime: 2, code: 3, job_hunt: 2,
+    write: 3, read_lit: 5,
+  },
+  技术宅: {
+    study: 3, socialize: 1, exercise: 2, rest: 2, parttime: 2, code: 9, job_hunt: 4,
+    write: 9, read_lit: 2,
+  },
+  社交达人: {
+    study: 2, socialize: 9, exercise: 2, rest: 2, parttime: 2, code: 2, job_hunt: 1,
+    write: 2, read_lit: 2,
+  },
+  躺平: {
+    study: 1, socialize: 3, exercise: 2, rest: 9, parttime: 2, code: 1, job_hunt: 1,
+    // 文科的两个专属行动权重是 0（= 这个风格不会主动选）。
+    //
+    // 这不是为了把结局「调出来」，而是因为原来的 躺平 在文科身上**根本不是躺平**：
+    // 它会主动读书、主动写稿，于是学业一路保在 70 分以上，
+    // 「学业崩塌」这条对文科生完全真实的失败路线就没人代表了。
+    // 摆烂的文科生就是既不读书也不动笔 —— 这个风格必须存在。
+    write: 0, read_lit: 0,
+  },
   随机: {},
+}
+
+/* ---------------- 单个专业的可见内容 ---------------- */
+
+/** 某个专业看得见的那份内容切片（死内容检查的判据就是它） */
+export interface MajorContent {
+  actions: ActionDef[]
+  events: GameEvent[]
+  endings: Ending[]
+  summaryRules: SummaryRule[]
+  /**
+   * 每周固定衰减/结算。
+   *
+   * 必须算进「内容切片」：它是**会写 flag 的**（比如 `穷困周数` 就是在这里 +1 的）。
+   * 少收集这一处，flag 审计就会把 `穷困周数` 误报成「读了却没人写」——
+   * 这个假警报真的出现过一次。
+   */
+  weeklyEffects: Effect[]
+}
+
+export function contentFor(majorId: string): MajorContent {
+  return {
+    actions: GAME_DATA.actions.filter((item) => matchesMajor(item.majors, majorId)),
+    events: GAME_DATA.events.filter((item) => matchesMajor(item.majors, majorId)),
+    endings: GAME_DATA.endings.filter((item) => matchesMajor(item.majors, majorId)),
+    summaryRules: GAME_DATA.summary.rules.filter((item) => matchesMajor(item.majors, majorId)),
+    // 每周固定结算不区分专业（它是全专业共通的生活成本），所以原样带过来
+    weeklyEffects: GAME_DATA.config.weeklyEffects,
+  }
 }
 
 /* ---------------- 单局模拟 ---------------- */
 
 export interface SimOutcome {
+  majorId: string
   endingId: string
   stats: Stats
   /** 本局触发过的事件 id —— 用于度量内容覆盖和跨局重复度 */
@@ -56,9 +116,16 @@ export interface SimOutcome {
   summaryLines: string[]
 }
 
-/** 用指定决策风格跑一局。seed 固定则结果固定。 */
-export function playOne(seed: number, weights: Record<string, number>): SimOutcome {
-  const engine = new GameEngine(GAME_DATA, { seed })
+/** 用指定决策风格跑一局。seed 固定则结果固定。不传 majorId 则用默认专业 */
+export function playOne(
+  seed: number,
+  weights: Record<string, number>,
+  majorId?: string,
+): SimOutcome {
+  const engine = new GameEngine(
+    GAME_DATA,
+    majorId === undefined ? { seed } : { seed, majorId },
+  )
   const rng = mulberry32(seed * 7919 + 13)
   let guard = 0
 
@@ -82,6 +149,7 @@ export function playOne(seed: number, weights: Record<string, number>): SimOutco
   }
 
   return {
+    majorId: engine.getState().majorId,
     endingId: engine.getEnding()?.id ?? '(无结局)',
     stats: engine.getState().stats,
     // 去重：可重复事件每触发一次就往 seenEvents 里 push 一次，
@@ -115,22 +183,34 @@ export interface ContentMetrics {
   summaryTexts: Set<string>
 }
 
-export interface SimReport {
-  gamesPerStrategy: number
-  strategyNames: string[]
+/** 单个专业的模拟结果 */
+export interface MajorReport {
+  majorId: string
+  majorName: string
   /** 风格 → (结局 id → 次数) */
   counts: Map<string, Map<string, number>>
   /** 风格 → (属性 key → 总和) */
   statTotals: Map<string, Record<string, number>>
-  /** 所有被触发过的结局 id */
+  /** 本专业触发过的结局 id */
   triggered: Set<string>
-  /** 从未被触发过的结局 */
+  /** 本专业可见、但从未被触发的结局 */
   deadEndings: { id: string; title: string }[]
   content: ContentMetrics
 }
 
-export function simulate(gamesPerStrategy: number): SimReport {
-  const strategyNames = Object.keys(STRATEGIES)
+export interface SimReport {
+  gamesPerStrategy: number
+  strategyNames: string[]
+  majors: MajorReport[]
+}
+
+/** 跑完一个专业的全部风格 */
+function simulateMajor(
+  majorId: string,
+  majorName: string,
+  gamesPerStrategy: number,
+  strategyNames: string[],
+): MajorReport {
   const counts = new Map<string, Map<string, number>>()
   const statTotals = new Map<string, Record<string, number>>()
   const triggered = new Set<string>()
@@ -149,7 +229,7 @@ export function simulate(gamesPerStrategy: number): SimReport {
     counts.set(name, tally)
 
     for (let i = 0; i < gamesPerStrategy; i++) {
-      const outcome = playOne(i + 1, weights)
+      const outcome = playOne(i + 1, weights, majorId)
       tally.set(outcome.endingId, (tally.get(outcome.endingId) ?? 0) + 1)
       triggered.add(outcome.endingId)
       for (const key of STAT_ORDER) {
@@ -168,7 +248,9 @@ export function simulate(gamesPerStrategy: number): SimReport {
     statTotals.set(name, totals)
   }
 
-  const deadEndings = GAME_DATA.endings
+  const visible = contentFor(majorId)
+
+  const deadEndings = visible.endings
     .filter((ending) => !triggered.has(ending.id))
     .map((ending) => ({ id: ending.id, title: ending.title }))
 
@@ -196,7 +278,9 @@ export function simulate(gamesPerStrategy: number): SimReport {
     }
   }
 
-  const deadEvents = GAME_DATA.events
+  // 死事件必须**只在本专业可见的事件里**找：专属事件对别的专业来说是
+  // 「不该出现」，而不是「死了」
+  const deadEvents = visible.events
     .filter((event) => event.category === 'random')
     .filter((event) => !eventCounts.has(event.id))
     .map((event) => ({ id: event.id, title: event.title }))
@@ -212,7 +296,20 @@ export function simulate(gamesPerStrategy: number): SimReport {
     summaryTexts,
   }
 
-  return { gamesPerStrategy, strategyNames, counts, statTotals, triggered, deadEndings, content }
+  return { majorId, majorName, counts, statTotals, triggered, deadEndings, content }
+}
+
+export function simulate(gamesPerStrategy: number, majorIds?: string[]): SimReport {
+  const strategyNames = Object.keys(STRATEGIES)
+  const chosen = majorIds ?? GAME_DATA.majors.map((major) => major.id)
+
+  const majors = chosen.map((majorId) => {
+    const def = GAME_DATA.majors.find((major) => major.id === majorId)
+    if (!def) throw new Error(`未知专业: ${majorId}`)
+    return simulateMajor(majorId, def.name, gamesPerStrategy, strategyNames)
+  })
+
+  return { gamesPerStrategy, strategyNames, majors }
 }
 
 /**
@@ -220,9 +317,17 @@ export function simulate(gamesPerStrategy: number): SimReport {
  *
  * 规则的文案可能带 `{n}` 占位（渲染后变成具体数字，如「投出去了 3 份简历」），
  * 所以匹配要用「前缀 + 后缀」而不是全等比较。
+ *
+ * `majorId` 传了就只看该专业可见的规则：否则一条「只有文科会说的话」
+ * 会因为计算机的对局没触发它而被误报成死规则。
  */
-export function deadSummaryRules(fired: Set<string>): { text: string }[] {
-  return GAME_DATA.summary.rules
+export function deadSummaryRules(fired: Set<string>, majorId?: string): { text: string }[] {
+  const rules =
+    majorId === undefined
+      ? GAME_DATA.summary.rules
+      : contentFor(majorId).summaryRules
+
+  return rules
     .filter((rule) => {
       const [prefix, suffix] = rule.text.split('{n}')
       if (suffix === undefined) return !fired.has(rule.text)
@@ -231,19 +336,33 @@ export function deadSummaryRules(fired: Set<string>): { text: string }[] {
     .map((rule) => ({ text: rule.text }))
 }
 
-/* ---------------- 中英文混排对齐（中文按 2 个字符宽度算） ---------------- */
-
 /* ---------------- 渲染 ---------------- */
 
 export function renderReport(report: SimReport): void {
-  const { strategyNames, counts, statTotals, gamesPerStrategy } = report
-  const ordered = [...GAME_DATA.endings].sort((a, b) => a.priority - b.priority)
-  const labelWidth = 18
-  const cellWidth = 10
+  const { strategyNames, gamesPerStrategy } = report
 
   console.log(
-    `\n每种风格 ${gamesPerStrategy} 局，共 ${gamesPerStrategy * strategyNames.length} 局\n`,
+    `\n每个专业 × 每种风格 ${gamesPerStrategy} 局，` +
+      `共 ${gamesPerStrategy * strategyNames.length * report.majors.length} 局\n`,
   )
+
+  for (const major of report.majors) {
+    console.log(`\n═══ 专业：${major.majorName}（${major.majorId}） ═══`)
+    renderMajorMatrix(major, strategyNames, gamesPerStrategy)
+    renderContentHealth(major)
+  }
+  console.log('')
+}
+
+function renderMajorMatrix(
+  major: MajorReport,
+  strategyNames: string[],
+  gamesPerStrategy: number,
+): void {
+  const labelWidth = 18
+  const cellWidth = 10
+  const visible = contentFor(major.majorId)
+  const ordered = [...visible.endings].sort((a, b) => a.priority - b.priority)
 
   console.log(
     padEndWidth('结局', labelWidth) +
@@ -253,9 +372,12 @@ export function renderReport(report: SimReport): void {
 
   for (const ending of ordered) {
     const cells = strategyNames.map((name) =>
-      padStartWidth(`${(((counts.get(name)?.get(ending.id) ?? 0) / gamesPerStrategy) * 100).toFixed(1)}%`, cellWidth),
+      padStartWidth(
+        `${(((major.counts.get(name)?.get(ending.id) ?? 0) / gamesPerStrategy) * 100).toFixed(1)}%`,
+        cellWidth,
+      ),
     )
-    const never = strategyNames.every((name) => (counts.get(name)?.get(ending.id) ?? 0) === 0)
+    const never = strategyNames.every((name) => (major.counts.get(name)?.get(ending.id) ?? 0) === 0)
     console.log(padEndWidth(ending.title, labelWidth) + cells.join('') + (never ? '  ⚠ 从未触发' : ''))
   }
 
@@ -267,34 +389,36 @@ export function renderReport(report: SimReport): void {
 
   for (const key of STAT_ORDER) {
     const cells = strategyNames.map((name) => {
-      const avg = (statTotals.get(name)?.[key] ?? 0) / gamesPerStrategy
+      const avg = (major.statTotals.get(name)?.[key] ?? 0) / gamesPerStrategy
       return padStartWidth(key === 'money' ? `¥${Math.round(avg)}` : avg.toFixed(0), cellWidth)
     })
     console.log(padEndWidth(`  ${STAT_LABELS[key]}`, labelWidth) + cells.join(''))
   }
 
   console.log('')
-  if (report.deadEndings.length === 0) {
-    console.log(`✅ 所有 ${ordered.length} 个结局都至少被触发过一次。`)
+  if (major.deadEndings.length === 0) {
+    console.log(`✅ ${ordered.length} 个可见结局都至少被触发过一次。`)
   } else {
-    console.log(`⚠  有 ${report.deadEndings.length} 个结局在所有风格下都没触发过，很可能是「死结局」：`)
-    for (const ending of report.deadEndings) {
+    console.log(
+      `⚠  有 ${major.deadEndings.length} 个结局在本专业所有风格下都没触发过，很可能是「死结局」：`,
+    )
+    for (const ending of major.deadEndings) {
       console.log(`     - ${ending.title}  (${ending.id})`)
     }
     console.log('   要么放宽触发条件，要么确认这条路线真的走得通。')
   }
-
-  renderContentHealth(report)
-  console.log('')
 }
 
 /** 内容健康度：重复度、死事件、冷热排行。这是「玩家会不会玩两局就腻」的量化答案 */
-function renderContentHealth(report: SimReport): void {
-  const { content } = report
+function renderContentHealth(major: MajorReport): void {
+  const { content } = major
+  const visible = contentFor(major.majorId)
   const eventTitleOf = new Map(GAME_DATA.events.map((e) => [e.id, e.title]))
 
   console.log('\n── 内容健康度 ─────────────────────────────')
-  console.log(`  每局遇到的不重复事件:  ${content.avgDistinct.toFixed(1)} / ${GAME_DATA.events.length}`)
+  console.log(
+    `  每局遇到的不重复事件:  ${content.avgDistinct.toFixed(1)} / ${visible.events.length}`,
+  )
   console.log(
     `  跨局重复度:            ${(content.repetition * 100).toFixed(0)}%  ` +
       `(${content.repetition <= 0.3 ? '✅ ≤30%' : '⚠ 超过 30%，重复感偏强'})`,
@@ -306,7 +430,7 @@ function renderContentHealth(report: SimReport): void {
   )
 
   if (content.deadEvents.length === 0) {
-    console.log('  死事件:                ✅ 无（每个事件都被触发过）')
+    console.log('  死事件:                ✅ 无（本专业可见的每个事件都被触发过）')
   } else {
     console.log(`  死事件:                ⚠ 有 ${content.deadEvents.length} 个从未触发：`)
     for (const event of content.deadEvents) {
@@ -314,8 +438,8 @@ function renderContentHealth(report: SimReport): void {
     }
   }
 
-  const totalRules = GAME_DATA.summary.rules.length
-  const deadRules = deadSummaryRules(content.summaryTexts)
+  const totalRules = visible.summaryRules.length
+  const deadRules = deadSummaryRules(content.summaryTexts, major.majorId)
   if (deadRules.length === 0) {
     console.log(`  结算回顾规则:          ✅ ${totalRules}/${totalRules} 条都被触发过`)
   } else {

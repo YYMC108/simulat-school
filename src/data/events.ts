@@ -263,6 +263,8 @@ export const EVENTS: GameEvent[] = [
     title: '一个诡异的 Bug',
     text: '你的项目在本地跑得好好的，一部署就报错。你已经盯着这段代码三个小时了。',
     category: 'random',
+    // 部署/调试是这个专业独有的日常，文科不会遇到
+    majors: ['computer'],
     weight: 2,
     requires: { type: 'stat', key: 'skill', op: '>=', value: 45 },
     choices: [
@@ -287,7 +289,7 @@ export const EVENTS: GameEvent[] = [
   {
     id: 'ev_internship',
     title: '实习面试机会',
-    text: '学长内推你到一家公司面后端开发实习。HR 说这周内安排面试。',
+    text: '学长内推你到一家公司面一份实习。HR 说这周内安排面试。',
     category: 'random',
     weight: 3,
     requires: {
@@ -299,7 +301,7 @@ export const EVENTS: GameEvent[] = [
     },
     choices: [
       {
-        label: '全力准备，刷八股和算法',
+        label: '全力准备，把面试和笔试都过一遍',
         effects: [
           { type: 'stat', key: 'skill', delta: 6 },
           { type: 'stat', key: 'mood', delta: -6 },
@@ -758,6 +760,7 @@ export const EVENTS: GameEvent[] = [
     title: '开源 PR 被合并了',
     text: '你给一个开源项目修了个小 bug，今天收到了 maintainer 的 merge 通知。',
     category: 'random',
+    majors: ['computer'],
     weight: 2,
     requires: { type: 'stat', key: 'skill', op: '>=', value: 50 },
     effects: [
@@ -770,6 +773,7 @@ export const EVENTS: GameEvent[] = [
     title: '48 小时黑客松',
     text: '校园黑客松报名开始了，主题是「帮大学生解决一个痛点」。你的队友已经在摇人了。',
     category: 'random',
+    majors: ['computer'],
     weight: 2,
     requires: {
       type: 'all',
@@ -799,6 +803,7 @@ export const EVENTS: GameEvent[] = [
     title: '被同学请教',
     text: '同学拍你的肩膀：「听说你写代码很厉害，这个报错帮我看看？」',
     category: 'random',
+    majors: ['computer'],
     weight: 2,
     requires: { type: 'stat', key: 'skill', op: '>=', value: 55 },
     effects: [

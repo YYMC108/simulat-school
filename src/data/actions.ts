@@ -73,6 +73,8 @@ export const ACTIONS: ActionDef[] = [
     label: '写自己的项目 / 刷算法题',
     description: '打开编辑器，写点自己想写的东西',
     cost: 1,
+    // 计算机专业的核心行动：文科的同位行动是「写稿」（见 literature.ts）
+    majors: ['computer'],
     effects: [
       { type: 'stat', key: 'skill', delta: 4 },
       { type: 'stat', key: 'academic', delta: 1 },
@@ -83,7 +85,9 @@ export const ACTIONS: ActionDef[] = [
   {
     id: 'job_hunt',
     label: '投简历 / 准备面试',
-    description: '投简历、背八股、刷算法题',
+    // 描述不能只写「背八股、刷算法题」：这个行动是两个专业共享的，
+    // 文科生投简历也要准备笔试和面试（描述只用于展示，不影响数值）
+    description: '投简历、准备笔试和面试',
     cost: 1,
     requires: {
       type: 'all',

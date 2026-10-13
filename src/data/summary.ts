@@ -56,6 +56,8 @@ export const SUMMARY: SummaryContent = {
       requires: { type: 'seenEvent', id: 'ev_midterm' },
       kind: 'academic',
       order: 22,
+      // 这句话点名了「数据库和操作系统」，是计算机专业的课表
+      majors: ['computer'],
       text: '熬过了数据库和操作系统挤在同一周的期中',
     },
     {
@@ -70,12 +72,14 @@ export const SUMMARY: SummaryContent = {
       requires: { type: 'seenEvent', id: 'ev_oss' },
       kind: 'skill',
       order: 30,
+      majors: ['computer'],
       text: '给开源项目提的补丁被合并了',
     },
     {
       requires: { type: 'seenEvent', id: 'ev_hackathon' },
       kind: 'skill',
       order: 32,
+      majors: ['computer'],
       text: '在 48 小时黑客松里熬了一整个通宵',
     },
     {
@@ -186,6 +190,8 @@ export const SUMMARY: SummaryContent = {
       requires: { type: 'stat', key: 'skill', op: '>=', value: 85 },
       kind: 'skill',
       order: 82,
+      // 「技术」是计算机的说法；文科的同位规则在 literature 包里另写
+      majors: ['computer'],
       text: '技术上的长进肉眼可见',
     },
     {
