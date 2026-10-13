@@ -108,6 +108,12 @@ const BROWSER_CANDIDATES = [
 const VIEWPORTS = [
   { width: 390, height: 844, mobile: true, label: 'iPhone 14' },
   { width: 360, height: 740, mobile: true, label: '小屏 Android' },
+  /**
+   * 临界宽度：双栏的断点就在 1000px，所以**最窄的双栏**才是最容易出问题的那一屏
+   *（左栏被压到 ~540px、右栏固定 400px）。只测 1280 会完全跳过它。
+   * 1024×768 也是常见的「小笔记本 / 平板横向」尺寸。
+   */
+  { width: 1024, height: 768, mobile: false, label: '临界宽度 1024' },
   { width: 1280, height: 900, mobile: false, label: '桌面' },
 ]
 
@@ -127,8 +133,39 @@ const ENDING_VIEWPORTS = [
   { width: 1280, height: 620, mobile: false, label: '桌面矮窗 1280x620' },
 ]
 
+/**
+ * 两栏几何（默认模式与 `--projects` 模式共用）。
+ *
+ * 「没有溢出、没有内部滚动」这类判据**看不出「其实是单栏」** ——
+ * 一个 620px 的柱子同样不会溢出。所以双栏布局必须有自己的断言：
+ * 宽屏时右栏真的在左栏右边（且有纵向重叠），窄屏时真的是上下堆叠。
+ */
+const COLUMN_GEOMETRY_JS = `
+  const rect = (sel) => {
+    const el = document.querySelector(sel)
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return {
+      left: Math.round(r.left),
+      right: Math.round(r.right),
+      top: Math.round(r.top),
+      bottom: Math.round(r.bottom),
+      w: Math.round(r.width),
+    }
+  }
+  const main = rect('.col-main')
+  const side = rect('.col-side')
+  // 并排 = 右栏左边缘在左栏右边缘之右，且两栏纵向有重叠
+  const sideBySide =
+    main && side
+      ? side.left >= main.right - 1 && side.top < main.bottom - 1 && main.top < side.bottom - 1
+      : false
+  const columnsGap = main && side ? Math.round(side.left - main.right) : null
+`
+
 const MEASURE = `
 (() => {
+${COLUMN_GEOMETRY_JS}
   const box = (sel) => {
     const el = document.querySelector(sel)
     if (!el) return null
@@ -151,6 +188,10 @@ const MEASURE = `
     optionCount: options.length,
     optionHeight: options.length ? Math.round(options[0].getBoundingClientRect().height) : null,
     lastOptionBottom: last ? Math.round(last.bottom) : null,
+    main,
+    side,
+    sideBySide,
+    columnsGap,
   })
 })()
 `
@@ -223,10 +264,13 @@ const MEASURE_PROJECTS = `
   if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click()
   await sleep(180)
 
-  const rect = (el) => el.getBoundingClientRect()
+${COLUMN_GEOMETRY_JS}
+  // 注意：上面共用的 rect() 收的是**选择器**，这里要的是元素盒子，所以另起一个名字，
+  // 别把两者混用（混用会静默拿到 null，然后所有断言都变成「通过」）
+  const elemRect = (el) => el.getBoundingClientRect()
   const panel = document.querySelector('.panel')
   const cards = [...document.querySelectorAll('.project')]
-  const lastCard = cards.length ? rect(cards[cards.length - 1]) : null
+  const lastCard = cards.length ? elemRect(cards[cards.length - 1]) : null
 
   return JSON.stringify({
     viewport: window.innerWidth + 'x' + window.innerHeight,
@@ -234,15 +278,19 @@ const MEASURE_PROJECTS = `
     optionCount: document.querySelectorAll('.option').length,
     projectCount: cards.length,
     projectOverflowX: cards.some((card) => {
-      const r = rect(card)
+      const r = elemRect(card)
       return r.right > window.innerWidth + 1 || r.left < -1
     }),
-    summaryRowBottom: Math.round(rect(toggle).bottom),
+    summaryRowBottom: Math.round(elemRect(toggle).bottom),
     panelClientH: panel ? panel.clientHeight : null,
     panelScrollH: panel ? panel.scrollHeight : null,
     panelScrollable: panel ? panel.scrollHeight > panel.clientHeight + 1 : false,
     projectListBottom: lastCard ? Math.round(lastCard.bottom) : null,
-    panelBottom: panel ? Math.round(rect(panel).bottom) : null,
+    panelBottom: panel ? Math.round(elemRect(panel).bottom) : null,
+    main,
+    side,
+    sideBySide,
+    columnsGap,
   })
 })()
 `
@@ -296,6 +344,31 @@ const ENDING_MEASURE = `
   })
 })()
 `
+
+/**
+ * 两栏几何的断言（默认模式与 `--projects` 模式共用）。
+ *
+ * 这是「双栏布局」这个改动的核心判据：**溢出检查看不出「其实是单栏」**。
+ * 它同时守两个方向 —— 宽屏必须并排、窄屏必须堆叠。
+ */
+function columnProblems(m, viewportWidth) {
+  const problems = []
+  const wideViewport = viewportWidth >= 1000
+
+  if (!m.main || !m.side) {
+    problems.push('找不到 .col-main / .col-side —— 两栏容器没渲染出来')
+  } else if (wideViewport && !m.sideBySide) {
+    problems.push(
+      `宽屏 ${viewportWidth}px 应该是双栏，但两列没有并排（左栏 ${m.main.w}px 右栏 ${m.side.w}px）`,
+    )
+  } else if (!wideViewport && m.sideBySide) {
+    problems.push(`窄屏 ${viewportWidth}px 应该是单栏，但两列并排了`)
+  } else if (wideViewport && m.columnsGap !== null && m.columnsGap < 8) {
+    problems.push(`两栏间距只有 ${m.columnsGap}px，挨得太近`)
+  }
+
+  return problems
+}
 
 function findBrowser() {
   return BROWSER_CANDIDATES.find((p) => existsSync(p)) ?? null
@@ -465,6 +538,8 @@ async function main() {
           if (m.projectListBottom !== null && m.projectListBottom > vp.height && !m.panelScrollable) {
             problems.push('展开后最后一张项目卡片超出视口，而面板不可滚动 —— 够不着')
           }
+          // 展开作品面板之后，两栏几何同样必须成立（宽屏并排 / 窄屏堆叠）
+          problems.push(...columnProblems(m, vp.width))
         }
         headline =
           `作品面板展开：项目 ${m.projectCount} 个、行动仍有 ${m.optionCount} 个，` +
@@ -521,7 +596,15 @@ async function main() {
         if (m.lastOptionBottom !== null && m.lastOptionBottom > vp.height) {
           problems.push(`最后一个选项超出视口（底边 ${m.lastOptionBottom} > ${vp.height}）`)
         }
+
+        // ── 两栏几何 ──
+        problems.push(...columnProblems(m, vp.width))
+
+        const columnInfo = vp.width >= 1000 && m.sideBySide
+          ? `两栏 ${m.main.w}px + ${m.columnsGap}px + ${m.side.w}px，`
+          : ''
         headline =
+          columnInfo +
           `选项 ${m.optionCount} 个 × ${m.optionHeight}px，` +
           `面板 ${m.panel?.clientH}px${m.panel?.innerScroll ? `（内容 ${m.panel.scrollH}px ⚠ 内部滚动）` : ''}，` +
           `日志区 ${m.feed?.clientH}px${m.feed?.innerScroll ? `（内容 ${m.feed.scrollH}px，可滚）` : ''}`

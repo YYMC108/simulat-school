@@ -39,6 +39,8 @@ export function App({
 
   return (
     <div className="app">
+      {/* 顶栏横跨整宽：它是**应用级**的状态（第几周、剩几点行动力、种子、重开），
+          不属于任何一栏。这样下面的两栏就能从同一条水平线开始，卡片顶边对齐。 */}
       <header className="topbar">
         <span className="topbar-week">
           第 <strong>{state.week}</strong>/{totalWeeks} 周
@@ -59,29 +61,38 @@ export function App({
         </button>
       </header>
 
-      <StatsPanel stats={state.stats} />
+      {/* 两栏是**桌面专属**的：手机上 .col-main / .col-side 仍是上下堆叠，
+          几何与加这两个包裹层之前完全一致（由 measure:layout 的移动端数字守着）。
+          分栏切换只发生在 CSS 的 @media (min-width: 1000px) 里。 */}
+      <div className="col-body">
+        <div className="col-main">
+          <StatsPanel stats={state.stats} />
 
-      <LogFeed feed={game.feed} />
+          <LogFeed feed={game.feed} />
+        </div>
 
-      {!game.ended && (
-        <footer className="bottom">
-          {game.pending ? (
-            <EventPanel
-              event={game.pending}
-              choices={game.choices}
-              onChoose={game.choosing}
-            />
-          ) : (
-            <ActionPanel
-              actions={game.actions}
-              actionPoints={state.actionPoints}
-              onAct={game.acting}
-              projects={game.projects}
-              onInvest={game.investing}
-            />
+        <div className="col-side">
+          {!game.ended && (
+            <footer className="bottom">
+              {game.pending ? (
+                <EventPanel
+                  event={game.pending}
+                  choices={game.choices}
+                  onChoose={game.choosing}
+                />
+              ) : (
+                <ActionPanel
+                  actions={game.actions}
+                  actionPoints={state.actionPoints}
+                  onAct={game.acting}
+                  projects={game.projects}
+                  onInvest={game.investing}
+                />
+              )}
+            </footer>
           )}
-        </footer>
-      )}
+        </div>
+      </div>
 
       {game.ended && game.ending && (
         <EndingScreen

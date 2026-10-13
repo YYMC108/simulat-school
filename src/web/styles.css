@@ -61,6 +61,38 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* ---------------- 两栏容器 ----------------
+ *
+ * 这三个包裹层在**手机上不改变任何几何**：
+ *   .app 仍是纵向 flex（顶栏 + .col-body），.col-body 纵向吃掉剩余高度，
+ *   .col-main 在里面继续 flex: 1（.feed 照旧撑满），.col-side 按内容收缩 ——
+ *   与加包裹层之前的扁平结构等价。
+ * 桌面（≥1000px）才在 .col-body 上切成左右两栏，见文件末尾的媒体查询。
+ *
+ * 这么做的原因：移动端那套布局是逐像素算过的（见下面 .panel 的 220px 预算），
+ * 改结构就有破坏风险。所以移动端保持原样，新布局只在宽屏生效 ——
+ * 并且用 measure:layout 的移动端数字逐项比对来证明「真的没动」。 */
+.col-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.col-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.col-side {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -867,4 +899,68 @@ body {
     font-size: 12px;
   }
 }
+
+/* ============================================================
+ * 桌面双栏（≥1000px）
+ *
+ * ── 为什么 ──
+ * 移动优先的单列在 1280px 的桌面上就是中间一根 620px 的柱子，
+ * 两侧各空约 330px（内容只占 46% 宽）。观感就成了「东西都挤在中间」。
+ * 宽屏时把**操作区**挪到右侧独立成栏，左栏留给历史与状态：
+ * 日志本来就该宽一点（一行能放下更多字），而操作是「看一眼、点一下」的东西。
+ *
+ * ── 只改宽屏 ──
+ * 手机那套布局是逐像素算过的（见上面 .panel 的 220px 预算），
+ * 所以这个地方**一个字都不动**，分栏只在 ≥1000px 生效。
+ * 「真的没动」由 measure:layout 的移动端数字逐项比对来证明，不靠自觉。
+ * ========================================================== */
+@media (min-width: 1000px) {
+  .app {
+    /* 620 → 1140：顶栏横跨整宽，下面左边日志 + 右边 400px 操作区 */
+    max-width: 1140px;
+    padding: 0 20px;
+  }
+
+  .col-body {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 20px;
+  }
+
+  .col-main {
+    /* min-width: 0 是 flex 子项能被压窄的前提。
+       不加它，长日志的固有宽度会把右栏顶出去（flex 子项默认 min-width: auto）。 */
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .col-side {
+    /* 固定宽而不是按比例：操作区的宽度应该由「选项最多两行放得下」决定，
+       与视口多宽无关。400px − 面板内边距 24 − 选项内边距 24 ≈ 352px 正文宽度，
+       比手机上（390 屏 ≈ 342px）还略宽，所以选项不会因此多折一行。 */
+    flex: 0 0 400px;
+    padding-bottom: 10px;
+  }
+
+  /* 右栏面板的高度上限不再是移动端预算推出来的 220px，而是「别超出视口」；
+     超了就自己内部滚动（.panel 本来就有 overflow-y: auto） */
+  .col-side .panel {
+    max-height: calc(100dvh - 40px);
+  }
+
+  /* 底部留白已经由 .col-side 的 padding-bottom 提供，避免叠加成 20px */
+  .col-side .bottom {
+    padding-bottom: 0;
+  }
+
+  /* 桌面上的日志**从顶部往下长**。
+     手机上用 margin-top: auto 把内容压在底部是对的（像聊天记录，新消息贴着操作区），
+     但桌面上竖着有 800+px，那会在上方留一大片空白 —— 那正是「挤在中间」这股观感的
+     另一半来源。横向铺开之后，纵向也要把空间用起来。
+     注意这只改对齐方式：内容超出时 LogFeed 依然会自动滚到底，行为不变。 */
+  .col-main .feed > :first-child {
+    margin-top: 0;
+  }
+}
+
 

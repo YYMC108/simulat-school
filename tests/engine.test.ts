@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 
 import { STRATEGIES, deadSummaryRules, isolateMajor, playOne, simulate } from '../src/cli/simulate'
 import type { MajorContent } from '../src/cli/simulate'
@@ -41,15 +41,28 @@ function chooseFirstEnabled(engine: GameEngine): void {
 }
 
 /**
- * 一整轮完整模拟（6 种风格 × 120 局 × 每个专业）的结果。
+ * 一整轮完整模拟（2 个专业 × 7 种风格 × 120 局 = 1680 局）的结果。
  *
- * 三个「死 XX」不变量（死结局 / 死事件 / 死规则）吃的都是同一份结果，
- * 所以缓存起来只跑一次 —— 否则测试时间白翻几倍。
- * `simulate` 是种子确定的，缓存不影响正确性，也不会有 flaky。
+ * 七个「死 XX」不变量（死结局 / 死事件 / 死规则 / 死选项 / 死行动 / 死项目 / 死 flag）
+ * 吃的都是同一份结果，所以只跑一次并在 `beforeAll` 里准备好 —— 否则测试时间白翻几倍。
+ * `simulate` 是种子确定的，缓存不影响正确性。
+ *
+ * ⚠️ **为什么必须显式给宽裕的超时**
+ * 这份模拟加上检查要 4–5 秒，而 vitest 默认的测试超时正好是 **5 秒** ——
+ * 也就是说它一直坐在超时悬崖边上，偶尔会以「超时」的形式红掉。
+ * 这种红最坑人：它看起来像「内容出了问题」（死结局！），实际只是跑得慢；
+ * 而这个项目的检查是以「不是假警报」为荣的（README 里记过 5 次以上假警报的教训）。
+ * 所以：局数不降（样本量正是「稀有内容算不算可达」的判据），把超时给足。
  */
-let fullReport: ReturnType<typeof simulate> | null = null
+const HEAVY_SIM_TIMEOUT_MS = 30_000
+
+let fullReport: ReturnType<typeof simulate>
+
+beforeAll(() => {
+  fullReport = simulate(120)
+}, HEAVY_SIM_TIMEOUT_MS)
+
 function runFullSimulation(): ReturnType<typeof simulate> {
-  fullReport ??= simulate(120)
   return fullReport
 }
 
