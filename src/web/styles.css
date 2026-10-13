@@ -340,7 +340,7 @@ body {
 .options {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -352,7 +352,7 @@ body {
   flex-direction: column;
   gap: 1px;
   text-align: left;
-  padding: 7px 12px;
+  padding: 6px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
@@ -611,3 +611,260 @@ body {
     animation: none !important;
   }
 }
+
+/* ============================================================
+ * 阶段 2：开局选专业 + 作品面板
+ * ========================================================== */
+
+/* ---------------- 开局界面 ---------------- */
+
+.start {
+  /* 开局屏是独立的一屏：它不需要「日志流 + 底部操作区」那套三段式骨架，
+     所以不复用 .app，而是自己居中排布 */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  min-height: 100dvh;
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 24px 16px;
+  padding-top: calc(24px + env(safe-area-inset-top));
+}
+
+.start-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.start-sub {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-soft);
+  text-align: center;
+}
+
+.majors {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.major-card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  padding: 13px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.major-card:hover {
+  border-color: var(--accent);
+}
+
+.major-card:active {
+  background: var(--accent-soft);
+}
+
+.major-name {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.major-identity {
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.major-desc {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-soft);
+}
+
+.start-note {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* 顶栏里的专业标记（可点右侧「换专业」回到开局屏） */
+.topbar-major {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* ---------------- 作品 / 项目 ---------------- */
+
+/* 标题行里的作品入口。
+   用 margin-left:auto 挤到右边 —— 它**不占额外高度**，是整个设计的关键：
+   .panel 的 max-height 是由「顶栏 + 属性面板 + 日志区下限 + 底部留白」推出来的，
+   没有余量给新的一行。 */
+.projects-chip {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.projects-chip:hover {
+  border-color: var(--accent);
+}
+
+.projects-chip.open {
+  background: var(--surface-soft);
+  color: var(--text-soft);
+}
+
+.projects-caret {
+  flex: 0 0 auto;
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 9px 0 0;
+  padding: 9px 0 0;
+  border-top: 1px dashed var(--border);
+  list-style: none;
+}
+
+.project {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 9px 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.project:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.project:not(:disabled):hover {
+  border-color: var(--accent);
+}
+
+.project-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.project-name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.project-progress {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.project-bar {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.project-bar .fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.project-bar .fill.done {
+  background: var(--up);
+}
+
+.project-desc {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-soft);
+}
+
+.project-preview {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* ---------------- 长列表压缩模式 ----------------
+ *
+ * 什么时候用得上：一个专业最多可能同时露出 8 个行动
+ *（文科的 6 个共享 + 写稿 + 读原著；第 9 周技能到 50 还会再多一个「投简历」）。
+ *
+ * 这事必须处理，因为 360×740 上的账是算得死的：
+ *   顶栏 49 + 属性 88 + 日志区下限 72 + 底部留白 10 + 面板(内边距+标题 52)
+ *   ≈ 271px，留给行动选项的只有约 470px。
+ *   8 个两行选项要 8×58 + 7×6 ≈ 506px —— 放不下，于是面板会出现内部滚动，
+ *   而「选项被藏到折叠线以下」正是这个界面最不能接受的失败。
+ *
+ * 所以选项数 ≥ 8 时，把**风味描述那一行**收起来（只留标签 + 数值预告）。
+ * 数值预告是决策必需的，风味描述不是 —— 收它，而不是收信息。
+ * 一行选项约 34px，8 个只占约 314px，反而宽松了。
+ */
+.panel-compact .option-desc {
+  display: none;
+}
+
+.panel-compact .option {
+  padding: 7px 12px;
+}
+
+
+/* 矮屏（比如 360×740）：把开局界面压紧一点，保证两张专业卡片都露出来 */
+@media (max-height: 700px) {
+  .start {
+    gap: 10px;
+  }
+
+  .major-card {
+    padding: 10px 12px;
+  }
+
+  .start-sub {
+    font-size: 12px;
+  }
+}
+

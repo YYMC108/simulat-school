@@ -3,6 +3,7 @@ import { ActionPanel } from './components/ActionPanel'
 import { EndingScreen } from './components/EndingScreen'
 import { EventPanel } from './components/EventPanel'
 import { LogFeed } from './components/LogFeed'
+import { StartScreen } from './components/StartScreen'
 import { StatsPanel } from './components/StatsPanel'
 import { useEngine } from './useEngine'
 
@@ -13,21 +14,42 @@ import { useEngine } from './useEngine'
  * 有 `pending` 事件时引擎会冻结时间、`takeAction` 会抛错，
  * 所以界面这里也必须在同一个条件下只给选项 —— 但判断条件是引擎给的
  * （`game.pending`），不是 UI 自己推出来的。
+ *
+ * 阶段 2 多了一屏「选专业」：没开局时整页换成 StartScreen。
+ * 地址栏带了 `?major=<id>` 会直接开局跳过它（分享链接 / 布局回归脚本都靠这个）。
  */
-export function App() {
-  const game = useEngine()
+export function App({
+  initialMajorId,
+  initialSeed,
+}: {
+  /** 跳过开局界面直接开局（测试与「分享链接」用；生产环境走 URL / 开局界面） */
+  initialMajorId?: string
+  initialSeed?: number
+} = {}) {
+  const game = useEngine({ majorId: initialMajorId, seed: initialSeed })
+
+  if (!game.started || game.state === null || game.major === null) {
+    return <StartScreen majors={game.majors} onStart={game.start} />
+  }
+
+  // 收进局部常量：TS 的收窄不会穿过 JSX 里的箭头函数（Array.from 的回调）
+  const state = game.state
+  const major = game.major
   const { totalWeeks, actionPointsPerWeek } = GAME_DATA.config
 
   return (
     <div className="app">
       <header className="topbar">
         <span className="topbar-week">
-          第 <strong>{game.state.week}</strong>/{totalWeeks} 周
+          第 <strong>{state.week}</strong>/{totalWeeks} 周
         </span>
-        <span className="topbar-ap" aria-label={`剩余 ${game.state.actionPoints} 次行动`}>
+        <span className="topbar-ap" aria-label={`剩余 ${state.actionPoints} 次行动`}>
           {Array.from({ length: actionPointsPerWeek }, (_, index) => (
-            <i key={index} className={index < game.state.actionPoints ? 'dot on' : 'dot'} />
+            <i key={index} className={index < state.actionPoints ? 'dot on' : 'dot'} />
           ))}
+        </span>
+        <span className="topbar-major" title={major.identity}>
+          {major.name}
         </span>
         <span className="topbar-seed" title="随机种子，同一局可复现">
           #{game.seed}
@@ -37,7 +59,7 @@ export function App() {
         </button>
       </header>
 
-      <StatsPanel stats={game.state.stats} />
+      <StatsPanel stats={state.stats} />
 
       <LogFeed feed={game.feed} />
 
@@ -52,8 +74,10 @@ export function App() {
           ) : (
             <ActionPanel
               actions={game.actions}
-              actionPoints={game.state.actionPoints}
+              actionPoints={state.actionPoints}
               onAct={game.acting}
+              projects={game.projects}
+              onInvest={game.investing}
             />
           )}
         </footer>
@@ -62,10 +86,11 @@ export function App() {
       {game.ended && game.ending && (
         <EndingScreen
           ending={game.ending}
-          state={game.state}
+          state={state}
           summary={game.summary}
           seed={game.seed}
           onRestart={game.restart}
+          onChangeMajor={game.changeMajor}
         />
       )}
     </div>

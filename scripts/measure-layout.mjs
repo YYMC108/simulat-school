@@ -25,9 +25,20 @@
 import { spawn } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 
-const PAGE_URL = process.argv.find((a) => a.startsWith('http')) ?? 'http://localhost:5173/'
+/**
+ * 页面地址里的 http(s) 部分（可以覆盖成 preview 的 4173 端口）。
+ * 注意游戏内界面的测量会自动补上 `?major=`，见下面的 PAGE_URL。
+ */
+const BASE_URL = process.argv.find((a) => a.startsWith('http')) ?? 'http://localhost:5173/'
 /** 加 --shots 会把每个视口的截图写到 shots/ 下，方便肉眼看排版 */
 const WANT_SHOTS = process.argv.includes('--shots')
+/** 加 --start 量「开局选专业」那一屏，而不是游戏内界面 */
+const WANT_START = process.argv.includes('--start')
+/** 加 --projects 先展开作品面板再量（默认折叠状态才是首屏要量的状态） */
+const WANT_PROJECTS = process.argv.includes('--projects')
+/** 量哪个专业：`--major literature`。专业不同，可见的行动与项目数量也不同 */
+const MAJOR_FLAG_INDEX = process.argv.indexOf('--major')
+const MAJOR = MAJOR_FLAG_INDEX === -1 ? 'computer' : (process.argv[MAJOR_FLAG_INDEX + 1] ?? 'computer')
 /**
  * 加 --ending 会先在页面里把游戏玩到结局，再测量**结算页**的布局。
  *
@@ -36,8 +47,54 @@ const WANT_SHOTS = process.argv.includes('--shots')
  * 也是最容易出布局问题的地方（实测踩过 flex 居中 + 滚动导致顶部够不着的坑）。
  */
 const WANT_ENDING = process.argv.includes('--ending')
+
+/**
+ * 推进游戏若干步再测量。
+ *
+ * 为什么需要它：首屏并**不是**最难的界面。第 9 周起「投简历」会解锁
+ *（要求 week ≥ 9 且技能 ≥ 50），文科这时最多同时露出 8 个行动 ——
+ * 那才是布局真正的边界，而只量首屏永远碰不到它。
+ *
+ *   --advance 30                点 30 次（优先第一个可用选项）
+ *   --advance 30 --prefer 写稿   优先点标签含「写稿」的选项（用来把技能顶上去，
+ *                              真的把第 9 周那个 8 行动的边界逼出来）
+ */
+const ADVANCE_FLAG_INDEX = process.argv.indexOf('--advance')
+const ADVANCE_STEPS = ADVANCE_FLAG_INDEX === -1
+  ? 0
+  : Number.parseInt(process.argv[ADVANCE_FLAG_INDEX + 1] ?? '0', 10)
+const PREFER_FLAG_INDEX = process.argv.indexOf('--prefer')
+const PREFER_LABEL = PREFER_FLAG_INDEX === -1 ? null : (process.argv[PREFER_FLAG_INDEX + 1] ?? null)
+const WANT_ADVANCE = Number.isFinite(ADVANCE_STEPS) && ADVANCE_STEPS > 0
+
+/**
+ * 真正要导航到的地址。
+ *
+ * 游戏内界面的测量一律带上 `?major=<专业>`，有两个用处：
+ *   1. 跳过「选专业」那一屏，直接量到目标界面
+ *   2. 顺便把「专业不同 → 可见行动数量不同」也纳入回归范围
+ *      （文科有 8 个行动、计算机 7 个 —— 8 个那种才是真正压到边界的）
+ * 量开局界面时当然不能带，否则它自己就被跳过了。
+ */
+const PAGE_URL = (() => {
+  if (WANT_START) return BASE_URL
+  const url = new URL(BASE_URL)
+  url.searchParams.set('major', MAJOR)
+  // 固定种子：布局回归必须可复现。同一颗种子 → 同一串事件 → 同一个界面状态，
+  // 否则每次跑到的「中间状态」都不一样，出的问题也没法复现。
+  url.searchParams.set('seed', '12345')
+  return url.toString()
+})()
+
 const PORT = 9333
 const BROWSER_TIMEOUT_MS = 20000
+
+/**
+ * 日志区的高度下限（与 CSS 里 `.panel` 的 `calc(100dvh - 220px)` 是同一套预算：
+ * 顶栏 49 + 属性面板 88 + 日志区下限 72 + 底部留白 10 ≈ 220）。
+ * 低于它，开场引导就真的放不下了。
+ */
+const FEED_FLOOR = 72
 
 const BROWSER_CANDIDATES = [
   process.env.CHROME_PATH,
@@ -126,6 +183,89 @@ const PLAY_TO_END = `
     }
   }
   return document.querySelector('.ending') ? 'ended' : 'timeout'
+})()
+`
+
+/** 量「开局选专业」那一屏：所有专业卡片都要在首屏里露出来 */
+const MEASURE_START = `
+(() => {
+  const cards = [...document.querySelectorAll('.major-card')]
+  const rect = (el) => el.getBoundingClientRect()
+  const last = cards.length ? rect(cards[cards.length - 1]) : null
+  const start = document.querySelector('.start')
+  return JSON.stringify({
+    viewport: window.innerWidth + 'x' + window.innerHeight,
+    docsOverflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
+    cardCount: cards.length,
+    cardWidth: cards.length ? Math.round(rect(cards[0]).width) : null,
+    cardOverflowX: cards.some((card) => {
+      const r = rect(card)
+      return r.right > window.innerWidth + 1 || r.left < -1
+    }),
+    lastCardBottom: last ? Math.round(last.bottom) : null,
+    startScrollable: start ? start.scrollHeight > start.clientHeight + 1 : false,
+  })
+})()
+`
+
+/**
+ * 量**展开后**的作品面板。
+ *
+ * 默认折叠状态由首屏那四条检查覆盖；这里专门量玩家点开之后会不会出事：
+ * 标题行必须还在屏幕上（否则收不回去），展开出来的项目要么看得见、
+ * 要么至少能滚到（面板自己有滚动条）。
+ */
+const MEASURE_PROJECTS = `
+(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const toggle = document.querySelector('.projects-chip')
+  if (!toggle) return JSON.stringify({ missing: true })
+  if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click()
+  await sleep(180)
+
+  const rect = (el) => el.getBoundingClientRect()
+  const panel = document.querySelector('.panel')
+  const cards = [...document.querySelectorAll('.project')]
+  const lastCard = cards.length ? rect(cards[cards.length - 1]) : null
+
+  return JSON.stringify({
+    viewport: window.innerWidth + 'x' + window.innerHeight,
+    docsOverflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
+    optionCount: document.querySelectorAll('.option').length,
+    projectCount: cards.length,
+    projectOverflowX: cards.some((card) => {
+      const r = rect(card)
+      return r.right > window.innerWidth + 1 || r.left < -1
+    }),
+    summaryRowBottom: Math.round(rect(toggle).bottom),
+    panelClientH: panel ? panel.clientHeight : null,
+    panelScrollH: panel ? panel.scrollHeight : null,
+    panelScrollable: panel ? panel.scrollHeight > panel.clientHeight + 1 : false,
+    projectListBottom: lastCard ? Math.round(lastCard.bottom) : null,
+    panelBottom: panel ? Math.round(rect(panel).bottom) : null,
+  })
+})()
+`
+
+/** 把游戏推进 N 步（可选：优先点某个标签），逼出后面的界面状态 */
+const advanceScript = (steps, preferLabel) => `
+(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const prefer = ${JSON.stringify(preferLabel)}
+  let clicked = 0
+  for (let i = 0; i < 4000 && clicked < ${steps}; i++) {
+    if (document.querySelector('.ending')) break
+    const btns = [...document.querySelectorAll('.option:not([disabled])')]
+    if (btns.length === 0) {
+      await sleep(20)
+      continue
+    }
+    const target = prefer ? (btns.find((b) => b.textContent.includes(prefer)) ?? btns[0]) : btns[0]
+    target.click()
+    clicked++
+    await sleep(5)
+  }
+  return String(clicked)
 })()
 `
 
@@ -227,7 +367,18 @@ async function main() {
     process.exit(1)
   }
 
+  const modeLabel = WANT_START
+    ? '开局选专业'
+    : WANT_PROJECTS
+      ? '作品面板（展开）'
+      : WANT_ENDING
+        ? '结算页'
+        : WANT_ADVANCE
+          ? `游戏第 N 步（推进 ${ADVANCE_STEPS} 次${PREFER_LABEL ? `，优先「${PREFER_LABEL}」` : ''}）`
+          : '游戏首屏'
+
   console.log(`浏览器: ${browser}`)
+  console.log(`模式:   ${modeLabel}${WANT_START ? '' : `　专业: ${MAJOR}`}`)
   console.log(`页面:   ${PAGE_URL}`)
   console.log(`端口:   ${PORT}\n`)
 
@@ -274,7 +425,40 @@ async function main() {
       let headline = ''
       let m = {}
 
-      if (WANT_ENDING) {
+      if (WANT_START) {
+        const res = await send('Runtime.evaluate', { expression: MEASURE_START, returnByValue: true })
+        m = JSON.parse(res.result.value)
+        if (m.cardCount === 0) problems.push('开局界面没有渲染出任何专业卡片')
+        if (m.docsOverflowX) problems.push('页面横向溢出')
+        if (m.cardOverflowX) problems.push(`专业卡片横向溢出（宽 ${m.cardWidth}px）`)
+        if (m.lastCardBottom !== null && m.lastCardBottom > vp.height) {
+          problems.push(`最后一张专业卡片超出视口（底边 ${m.lastCardBottom} > ${vp.height}）—— 玩家选不到它`)
+        }
+        if (m.startScrollable) problems.push('开局界面需要滚动才能看全 —— 专业卡片被挤下去了')
+        headline = `专业卡片 ${m.cardCount} 张（宽 ${m.cardWidth}px），最后一张底边 ${m.lastCardBottom}px`
+      } else if (WANT_PROJECTS) {
+        const res = await send('Runtime.evaluate', {
+          expression: MEASURE_PROJECTS,
+          awaitPromise: true,
+          returnByValue: true,
+        })
+        m = JSON.parse(res.result.value)
+        if (m.missing) {
+          problems.push('页面上找不到作品面板 —— 这个专业是不是没有项目？')
+        } else {
+          if (m.docsOverflowX) problems.push('页面横向溢出')
+          if (m.projectOverflowX) problems.push('项目卡片横向溢出')
+          if (m.summaryRowBottom > vp.height) {
+            problems.push(`作品面板的标题行被挤出屏幕（底边 ${m.summaryRowBottom} > ${vp.height}）—— 展开后收不回去`)
+          }
+          if (m.projectListBottom !== null && m.projectListBottom > vp.height && !m.panelScrollable) {
+            problems.push('展开后最后一张项目卡片超出视口，而面板不可滚动 —— 够不着')
+          }
+        }
+        headline =
+          `作品面板展开：项目 ${m.projectCount} 个、行动仍有 ${m.optionCount} 个，` +
+          `面板 ${m.panelClientH}px / 内容 ${m.panelScrollH}px`
+      } else if (WANT_ENDING) {
         const played = await send('Runtime.evaluate', {
           expression: PLAY_TO_END,
           awaitPromise: true,
@@ -303,6 +487,13 @@ async function main() {
           `结算页：回顾 ${m.lineCount} 条，卡片高 ${m.cardHeight}px，` +
           `整页可滚动 ${m.overlayScrollable ? '是' : '否'}`
       } else {
+        if (WANT_ADVANCE) {
+          await send('Runtime.evaluate', {
+            expression: advanceScript(ADVANCE_STEPS, PREFER_LABEL),
+            awaitPromise: true,
+            returnByValue: true,
+          })
+        }
         const res = await send('Runtime.evaluate', { expression: MEASURE, returnByValue: true })
         m = JSON.parse(res.result.value)
         if (m.docsOverflowX) problems.push('页面横向溢出')
@@ -312,13 +503,24 @@ async function main() {
               ' —— 玩家看不到全部选项',
           )
         }
-        if (m.feed?.innerScroll) problems.push('日志区在初始状态就溢出（引导文字被裁掉）')
+        if (m.feed?.innerScroll) {
+          // 日志区是「历史」，它的本质就是可以滚 —— 真正不能容忍的是它被压到
+          // 连一句开场白都放不下（低于 72px 的下限）。所以这里只在下限被击穿时判错，
+          // 其余情况作为信息量报出来（阶段 2 底部多了一个作品入口，
+          // 在最紧的 360×740 上，日志区首屏就开始滚动是有意接受的取舍）。
+          if (m.feed.clientH < FEED_FLOOR) {
+            problems.push(
+              `日志区被压到 ${m.feed.clientH}px，低于 ${FEED_FLOOR}px 的下限 —— 开场引导放不下`,
+            )
+          }
+        }
         if (m.lastOptionBottom !== null && m.lastOptionBottom > vp.height) {
           problems.push(`最后一个选项超出视口（底边 ${m.lastOptionBottom} > ${vp.height}）`)
         }
         headline =
           `选项 ${m.optionCount} 个 × ${m.optionHeight}px，` +
-          `面板 ${m.panel?.clientH}px，日志区 ${m.feed?.clientH}px`
+          `面板 ${m.panel?.clientH}px${m.panel?.innerScroll ? `（内容 ${m.panel.scrollH}px ⚠ 内部滚动）` : ''}，` +
+          `日志区 ${m.feed?.clientH}px${m.feed?.innerScroll ? `（内容 ${m.feed.scrollH}px，可滚）` : ''}`
       }
 
       const tag = problems.length === 0 ? '✅' : '❌'
@@ -333,7 +535,11 @@ async function main() {
         })
         const file = WANT_ENDING
           ? `shots/ending-${vp.width}x${vp.height}.png`
-          : `shots/${vp.width}x${vp.height}.png`
+          : WANT_START
+            ? `shots/start-${vp.width}x${vp.height}.png`
+            : WANT_PROJECTS
+              ? `shots/projects-${vp.width}x${vp.height}.png`
+              : `shots/${vp.width}x${vp.height}.png`
         writeFileSync(file, Buffer.from(shot.data, 'base64'))
         console.log(`     截图: ${file}`)
       }

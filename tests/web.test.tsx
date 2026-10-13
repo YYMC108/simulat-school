@@ -3,8 +3,11 @@ import { describe, expect, it } from 'vitest'
 
 import { GAME_DATA } from '../src/data/index'
 import { GameEngine } from '../src/engine/engine'
+import type { ProjectView } from '../src/engine/types'
 import { App } from '../src/web/App'
+import { ActionPanel } from '../src/web/components/ActionPanel'
 import { EndingScreen } from '../src/web/components/EndingScreen'
+import { ProjectList } from '../src/web/components/ProjectList'
 
 /**
  * Web 界面的冒烟测试。
@@ -23,7 +26,10 @@ import { EndingScreen } from '../src/web/components/EndingScreen'
  * 所以断言连续文本前必须去掉它们，否则会误判成「内容缺失」。
  */
 function html(): string {
-  return renderToString(<App />).replace(/<!--[\s\S]*?-->/g, '')
+  return renderToString(<App initialMajorId="computer" initialSeed={7} />).replace(
+    /<!--[\s\S]*?-->/g,
+    '',
+  )
 }
 
 /**
@@ -33,6 +39,37 @@ function html(): string {
 function text(): string {
   return html().replace(/<[^>]*>/g, '')
 }
+
+/**
+ * 开局界面（不传专业）。
+ *
+ * 阶段 2 起 App 的第一屏就是「选专业」。Node 里没有 window，
+ * 传不了 `?major=`，所以走 `initialMajorId` 这个测试专用入口 ——
+ * 不传就是开局屏，传了就直接进游戏。
+ */
+describe('Web 开局界面', () => {
+  const startText = () =>
+    renderToString(<App />)
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<[^>]*>/g, '')
+
+  it('没选专业时给出可选专业，而不是空白页或直接开局', () => {
+    const view = startText()
+    expect(view).toContain('大学生活模拟器')
+    for (const major of GAME_DATA.majors) {
+      expect(view, `专业「${major.name}」没有出现在开局界面`).toContain(major.name)
+      expect(view, `专业「${major.name}」的身份文案没有出现`).toContain(major.identity)
+    }
+    // 开局界面不该同时出现游戏内的行动面板
+    expect(view).not.toContain('这周做点什么')
+  })
+
+  it('专业卡片数量与数据一致（加专业只写数据，开局界面自动多一张卡）', () => {
+    const raw = renderToString(<App />)
+    const cards = raw.match(/class="major-card"/g) ?? []
+    expect(cards.length).toBe(GAME_DATA.majors.length)
+  })
+})
 
 describe('Web 界面首屏', () => {
   it('渲染出周数、行动力与属性面板', () => {
@@ -73,6 +110,94 @@ describe('Web 界面首屏', () => {
     const view = text()
     expect(view).toContain('重开')
     expect(view).toContain('#')
+  })
+})
+
+/**
+ * 作品 / 项目界面。
+ *
+ * 这里刻意用真实数据里的一个项目（`proj_poetry`）来造 ProjectView，
+ * 而不是手搓一个假 ProjectDef：`requiredInvestments` 这类字段一旦改名，
+ * 假数据会继续「通过」，真数据不会。
+ */
+describe('作品 / 项目界面', () => {
+  const poetry = GAME_DATA.projects.find((project) => project.id === 'proj_poetry')!
+  const view = (over: Partial<ProjectView> = {}): ProjectView => ({
+    project: poetry,
+    progress: 1,
+    required: poetry.requiredInvestments,
+    completed: false,
+    unlocked: true,
+    ...over,
+  })
+
+  const computerActions = GAME_DATA.actions.filter(
+    (action) => action.majors === undefined || action.majors.includes('computer'),
+  )
+
+  it('作品入口在标题行里，并显示进行中的进度', () => {
+    const out = renderToString(
+      <ActionPanel
+        actions={computerActions}
+        actionPoints={3}
+        onAct={() => {}}
+        projects={[view()]}
+        onInvest={() => {}}
+      />,
+    )
+    expect(out).toContain('projects-chip')
+    expect(out).toContain(`作品 1/${poetry.requiredInvestments}`)
+  })
+
+  it('选项达到 8 个时切到压缩模式（收起风味描述，保证全部选项可见）', () => {
+    const eight = [...computerActions, GAME_DATA.actions[0]!]
+    const seven = computerActions
+    expect(
+      renderToString(<ActionPanel actions={eight} actionPoints={3} onAct={() => {}} />),
+      '8 个选项时应该压缩',
+    ).toContain('panel-compact')
+    expect(
+      renderToString(<ActionPanel actions={seven} actionPoints={3} onAct={() => {}} />),
+      '7 个选项时不该压缩（风味描述还放得下）',
+    ).not.toContain('panel-compact')
+  })
+
+  it('项目清单渲染进度与「每次投入」预告', () => {
+    const out = renderToString(
+      <ProjectList projects={[view()]} actionPoints={3} onInvest={() => {}} />,
+    )
+    expect(out).toContain('project-progress')
+    expect(out).toContain(`>1/${poetry.requiredInvestments}<`)
+    expect(out).toContain('每次投入')
+    expect(out).toContain('width:')
+  })
+
+  it('未解锁的项目是禁用的，且标出「未解锁」', () => {
+    const out = renderToString(
+      <ProjectList projects={[view({ unlocked: false })]} actionPoints={3} onInvest={() => {}} />,
+    )
+    expect(out).toContain('disabled')
+    expect(out).toContain('未解锁')
+  })
+
+  it('行动力不够时项目按钮也被禁用（不会点了才报错）', () => {
+    const out = renderToString(
+      <ProjectList projects={[view()]} actionPoints={0} onInvest={() => {}} />,
+    )
+    expect(out).toContain('disabled')
+  })
+
+  it('不同专业在界面上渲染出不同的行动（UI 真接上了专业过滤）', () => {
+    const strip = (htmlText: string) =>
+      htmlText.replace(/<!--[\s\S]*?-->/g, '').replace(/<[^>]*>/g, '')
+
+    const literature = strip(renderToString(<App initialMajorId="literature" initialSeed={7} />))
+    expect(literature).toContain('写稿 / 赶稿')
+    expect(literature, '文科不该看到计算机专属的「写项目」').not.toContain('写自己的项目')
+
+    const computer = strip(renderToString(<App initialMajorId="computer" initialSeed={7} />))
+    expect(computer).toContain('写自己的项目 / 刷算法题')
+    expect(computer).not.toContain('写稿 / 赶稿')
   })
 })
 

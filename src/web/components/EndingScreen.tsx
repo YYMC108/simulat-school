@@ -15,12 +15,15 @@ export function EndingScreen({
   summary,
   seed,
   onRestart,
+  onChangeMajor,
 }: {
   ending: Ending
   state: GameState
   summary: RunSummary | null
   seed: number
   onRestart: (seed?: number) => void
+  /** 回到开局界面重新选专业（阶段 2：一局结束后最自然的「换个身份」时机） */
+  onChangeMajor?: () => void
 }) {
   return (
     <div className="ending" role="dialog" aria-modal="true" aria-label="学期结算">
@@ -55,6 +58,11 @@ export function EndingScreen({
           <button type="button" className="button-ghost" onClick={() => onRestart(seed)}>
             重玩这一局（种子 {seed}）
           </button>
+          {onChangeMajor && (
+            <button type="button" className="button-ghost" onClick={onChangeMajor}>
+              换个专业
+            </button>
+          )}
         </div>
 
         <p className="ending-note">

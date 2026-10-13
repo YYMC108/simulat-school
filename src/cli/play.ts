@@ -64,6 +64,21 @@ function renderState(engine: GameEngine): void {
   for (const key of STAT_ORDER) {
     console.log(' ' + formatStat(key, state.stats[key]))
   }
+
+  // 作品进度单独一段：它是跨周的，不显示出来玩家就会忘了自己还有个没写完的东西
+  const projects = engine.getProjects()
+  if (projects.length > 0) {
+    console.log('─'.repeat(52))
+    for (const view of projects) {
+      const status = view.completed
+        ? '✔ 已完成'
+        : view.unlocked
+          ? `进度 ${view.progress}/${view.required}`
+          : '未解锁'
+      console.log(` 作品 ${view.project.name}　${status}`)
+    }
+  }
+
   console.log('═'.repeat(52))
 }
 
@@ -275,21 +290,42 @@ async function main(): Promise<void> {
 
       renderState(engine)
       const actions = engine.availableActions()
-      const index = await askIndex(
-        lines,
-        actions.map(
+      // 已完成的项目不再出现在菜单里（没什么可做的了，进度在 renderState 里已经显示）
+      const projects = engine.getProjects().filter((view) => !view.completed)
+
+      const labels = [
+        ...actions.map(
           (action) =>
             // 预告用灰色、回执用彩色：玩家一眼能分清
             // 「这个选项说它会做什么」和「它实际做了什么」
             `${action.label}  ${action.description}\n       ${c.dim(describeEffects(action.effects))}`,
         ),
-        actions.map(() => true),
-      )
+        ...projects.map((view) => {
+          const progress =
+            view.unlocked && view.progress > 0 ? `（进度 ${view.progress}/${view.required}）` : ''
+          return (
+            `${c.bold(`作品：${view.project.name}`)}${progress}\n` +
+            `       ${c.dim(view.project.description)}\n` +
+            `       ${c.dim(`每次投入：${describeEffects(view.project.perInvest) || '无属性变化'}`)}`
+          )
+        }),
+      ]
+      const enabled = [
+        ...actions.map(() => true),
+        ...projects.map((view) => view.unlocked),
+      ]
+
+      const index = await askIndex(lines, labels, enabled)
       if (index === null) {
         announceEof(engine)
         return
       }
-      printLogs(engine.takeAction(actions[index]!.id).logs)
+      // 前 actions.length 项是行动，后面是作品投入 —— 同一个菜单，两种操作
+      if (index < actions.length) {
+        printLogs(engine.takeAction(actions[index]!.id).logs)
+      } else {
+        printLogs(engine.investProject(projects[index - actions.length]!.project.id).logs)
+      }
     }
 
     const ending = engine.getEnding()
