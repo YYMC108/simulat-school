@@ -1,5 +1,5 @@
 import { evaluate } from './conditions'
-import { applyEffects } from './effects'
+import { STAT_ORDER, applyEffects } from './effects'
 import { mulberry32, pickWeighted, randomSeed } from './rng'
 import { cloneState, createInitialState, pushLog } from './state'
 import type {
@@ -11,6 +11,9 @@ import type {
   GameState,
   LogEntry,
   RNG,
+  RunSummary,
+  StatKey,
+  SummaryLine,
   TurnResult,
 } from './types'
 
@@ -90,6 +93,67 @@ export class GameEngine {
   getEnding() {
     if (this.state.endingId === null) return null
     return this.data.endings.find((ending) => ending.id === this.state.endingId) ?? null
+  }
+
+  /**
+   * 学期结算回顾：把这一局「做了什么」翻译成叙述。
+   *
+   * 规则表是纯数据（`data/summary.ts`），这里只做三件事：
+   * 求值条件、替换 `{n}` 占位、按 order 排序。
+   *
+   * 没走到结局时也能调用（给出截至当前状态的回顾），
+   * 但正常用法是在结局页 —— 所以 `endingTitle` 在未结束时是个占位串。
+   */
+  getSummary(): RunSummary {
+    const ctx = this.createContext()
+
+    const lines: SummaryLine[] = this.data.summary.rules
+      .map((rule, index) => ({ rule, index }))
+      .filter(({ rule }) => evaluate(rule.requires, ctx))
+      .map(({ rule, index }) => ({
+        kind: rule.kind,
+        text: rule.countFrom
+          ? rule.text.replace(/\{n\}/g, String(this.flagNumber(rule.countFrom)))
+          : rule.text,
+        order: rule.order ?? 0,
+        index,
+      }))
+      // 先按 order，再按规则在文件里的书写顺序 ——
+      // 保证排序结果唯一且稳定（同种子必然给出同一份回顾）
+      .sort((a, b) => a.order - b.order || a.index - b.index)
+      .map(({ kind, text }) => ({ kind, text }))
+
+    return {
+      identity: this.data.summary.identity,
+      lines,
+      stats: { ...this.state.stats },
+      endingTitle: this.getEnding()?.title ?? '还没有走到结局',
+      verdict: this.data.summary.verdicts[this.dominantStat()],
+      seed: this.seed,
+    }
+  }
+
+  /** 读一个数值 flag；未设置或不是数字都算 0 */
+  private flagNumber(key: string): number {
+    const value = this.state.flags[key]
+    return typeof value === 'number' ? value : 0
+  }
+
+  /**
+   * **归一化后**最高的属性 —— 用来选「一句话总评」。
+   *
+   * 归一化不能省：六项属性量纲不同（金钱上限 999999，其余 100），
+   * 直接比大小的话金钱永远第一，总评就永远是「跟钱打交道」。
+   * 并列时按 STAT_ORDER 取靠前的，保证同种子结果稳定。
+   */
+  private dominantStat(): StatKey {
+    const ranges = this.data.config.statRanges
+    const ratio = (key: StatKey) => this.state.stats[key] / (ranges[key].max || 1)
+    let best: StatKey = STAT_ORDER[0]!
+    for (const key of STAT_ORDER) {
+      if (ratio(key) > ratio(best)) best = key
+    }
+    return best
   }
 
   /** 当前可执行的行动（行动力够 + 条件满足） */

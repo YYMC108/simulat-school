@@ -1,24 +1,49 @@
-import type { Ending, GameState } from '../../engine/types'
+import type { Ending, GameState, RunSummary } from '../../engine/types'
 import { StatsPanel } from './StatsPanel'
 
-/** 结局页：全屏覆盖，给出最终成绩和重开入口 */
+/**
+ * 结算页：学期回顾 + 结局 + 重开入口。
+ *
+ * 回顾文案由**引擎**产出（`engine.getSummary()`），这里只负责排版 ——
+ * 和 CLI 用的是同一份数据，所以「命令行玩」和「浏览器玩」看到的是同一段叙述。
+ *
+ * 内容可能很长（30 多条回顾），所以整页可滚动。
+ */
 export function EndingScreen({
   ending,
   state,
+  summary,
   seed,
   onRestart,
 }: {
   ending: Ending
   state: GameState
+  summary: RunSummary | null
   seed: number
   onRestart: (seed?: number) => void
 }) {
   return (
-    <div className="ending" role="dialog" aria-modal="true" aria-label="结局">
+    <div className="ending" role="dialog" aria-modal="true" aria-label="学期结算">
       <div className="ending-card">
-        <p className="ending-kicker">结局</p>
+        <p className="ending-kicker">{summary ? summary.identity : '大学'} · 本学期结算</p>
         <h2 className="ending-title">{ending.title}</h2>
         <p className="ending-text">{ending.text}</p>
+
+        {summary && summary.lines.length > 0 && (
+          <>
+            <h3 className="ending-subtitle">这学期，你——</h3>
+            <ul className="ending-lines">
+              {summary.lines.map((line) => (
+                // 文案本身已经保证唯一（见「无死规则」测试），可以直接当 key
+                <li key={line.text} className={`ending-line ending-line-${line.kind}`}>
+                  {line.text}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {summary && <p className="ending-verdict">{summary.verdict}</p>}
 
         <h3 className="ending-subtitle">最终属性</h3>
         <StatsPanel stats={state.stats} />

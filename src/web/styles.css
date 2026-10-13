@@ -460,14 +460,18 @@ body {
   inset: 0;
   background: rgba(36, 31, 25, 0.55);
   display: flex;
-  align-items: center;
-  justify-content: center;
   padding: 16px;
   overflow-y: auto;
   z-index: 10;
 }
 
 .ending-card {
+  /* 用 margin: auto 居中，而**不是**父级 align-items: center。
+     flex 容器 + overflow-y: auto 时，align-items: center 会让
+     超高内容的顶部滚不到（经典 flex 居中滚动坑）；
+     margin: auto 在「放得下时居中」和「放不下时可滚动」两种情况下都正确。
+     结算回顾有 30 多条，卡片经常比屏幕高，所以这里必须用后者。 */
+  margin: auto;
   width: 100%;
   max-width: 460px;
   background: var(--surface);
@@ -501,6 +505,60 @@ body {
   font-weight: 600;
   color: var(--text-faint);
   letter-spacing: 0.08em;
+}
+
+/* ---------------- 结算回顾 ---------------- */
+
+.ending-lines {
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ending-line {
+  position: relative;
+  padding-left: 15px;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--text-soft);
+}
+
+/* 自绘小圆点而不是 list-style：要按分类控色 */
+.ending-line::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0.6em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+/* 按分类上色，扫一眼就能看出这学期「高光多」还是「坎多」。
+   只给两头着色，中间状态保持中性灰 —— 否则满屏彩色反而没有重点。 */
+.ending-line-club::before,
+.ending-line-skill::before,
+.ending-line-love::before,
+.ending-line-career::before,
+.ending-line-academic::before {
+  background: var(--accent);
+}
+
+.ending-line-setback::before {
+  background: var(--down);
+}
+
+.ending-verdict {
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13.5px;
 }
 
 .ending-card .stats {

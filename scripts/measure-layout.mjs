@@ -28,6 +28,14 @@ import { existsSync, writeFileSync } from 'node:fs'
 const PAGE_URL = process.argv.find((a) => a.startsWith('http')) ?? 'http://localhost:5173/'
 /** 加 --shots 会把每个视口的截图写到 shots/ 下，方便肉眼看排版 */
 const WANT_SHOTS = process.argv.includes('--shots')
+/**
+ * 加 --ending 会先在页面里把游戏玩到结局，再测量**结算页**的布局。
+ *
+ * 为什么要单独一个模式：结算页只在游戏结束时出现，
+ * 而它恰好是最长的一屏（30 多条回顾 + 属性 + 结局文本），
+ * 也是最容易出布局问题的地方（实测踩过 flex 居中 + 滚动导致顶部够不着的坑）。
+ */
+const WANT_ENDING = process.argv.includes('--ending')
 const PORT = 9333
 const BROWSER_TIMEOUT_MS = 20000
 
@@ -44,6 +52,22 @@ const VIEWPORTS = [
   { width: 390, height: 844, mobile: true, label: 'iPhone 14' },
   { width: 360, height: 740, mobile: true, label: '小屏 Android' },
   { width: 1280, height: 900, mobile: false, label: '桌面' },
+]
+
+/**
+ * 测结算页时**刻意用矮视口**。
+ *
+ * 结算卡片的高度取决于这一局触发了多少条回顾（实测 4–9 条 → 650–850px）。
+ * 用 844px 的视口它往往刚好装得下，于是「内容超过一屏」这个真正危险的场景
+ * **根本压不到** —— 我第一次跑就吃了这个亏：全绿，但其实没测到东西。
+ *
+ * 矮视口能稳定逼出「卡片比屏幕高」，从而验证那处 `margin: auto` 修复
+ * （flex 居中 + overflow 会把超高内容的顶部顶出可视区）是否真的有效。
+ */
+const ENDING_VIEWPORTS = [
+  { width: 390, height: 844, mobile: true, label: 'iPhone 14' },
+  { width: 360, height: 560, mobile: true, label: '矮屏 360x560' },
+  { width: 1280, height: 620, mobile: false, label: '桌面矮窗 1280x620' },
 ]
 
 const MEASURE = `
@@ -74,10 +98,70 @@ const MEASURE = `
 })()
 `
 
+/**
+ * 在页面里把游戏玩到结局：**随机**点一个可用选项，直到出现结算页。
+ *
+ * 为什么是随机而不是固定点第一个：一直点「去图书馆自习」只会走出一条
+ * 极其单调的路线（8 条回顾，卡片装得下屏幕），**测不到真正危险的场景** ——
+ * 结算卡片内容多到超过一屏时，flex 居中会不会把顶部顶出可视区。
+ * 随机选能触发更多 flag/事件，回顾条数更多、卡片更高，才算真的压到边界。
+ */
+const PLAY_TO_END = `
+(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  let seed = 12345
+  const rand = () => {
+    // 页面里的可复现伪随机，避免用 Math.random 让每次压测强度不一
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff
+    return seed / 0x7fffffff
+  }
+  for (let i = 0; i < 1200; i++) {
+    if (document.querySelector('.ending')) return 'ended'
+    const btns = [...document.querySelectorAll('.option:not([disabled])')]
+    if (btns.length > 0) {
+      btns[Math.floor(rand() * btns.length)].click()
+      await sleep(6)
+    } else {
+      await sleep(30)
+    }
+  }
+  return document.querySelector('.ending') ? 'ended' : 'timeout'
+})()
+`
+
+const ENDING_MEASURE = `
+(() => {
+  const overlay = document.querySelector('.ending')
+  const card = document.querySelector('.ending-card')
+  if (!overlay || !card) return JSON.stringify({ missing: true })
+
+  // 关键：滚到顶部，检查卡片顶部是不是真的够得着。
+  // 这一条专治「flex 居中 + overflow」把超高内容顶部顶出可视区的经典坑。
+  overlay.scrollTop = 0
+  const or = overlay.getBoundingClientRect()
+  const cr = card.getBoundingClientRect()
+  const kicker = document.querySelector('.ending-kicker')
+  const kr = kicker ? kicker.getBoundingClientRect() : null
+
+  return JSON.stringify({
+    viewport: window.innerWidth + 'x' + window.innerHeight,
+    docsOverflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
+    lineCount: document.querySelectorAll('.ending-line').length,
+    cardHeight: Math.round(cr.height),
+    cardWidth: Math.round(cr.width),
+    cardOverflowX: cr.right > window.innerWidth + 1 || cr.left < -1,
+    overlayScrollable: overlay.scrollHeight > overlay.clientHeight + 1,
+    topReachable: kr ? kr.top >= or.top - 1 : true,
+    topGap: kr ? Math.round(kr.top - or.top) : null,
+  })
+})()
+`
+
 function findBrowser() {
   return BROWSER_CANDIDATES.find((p) => existsSync(p)) ?? null
 }
 
+/** 等 CDP 端口起来（浏览器启动需要一点时间） */
 async function waitForCdp(deadline) {
   while (Date.now() < deadline) {
     try {
@@ -176,7 +260,7 @@ async function main() {
     await send('Runtime.enable')
     await send('Page.enable')
 
-    for (const vp of VIEWPORTS) {
+    for (const vp of WANT_ENDING ? ENDING_VIEWPORTS : VIEWPORTS) {
       await send('Emulation.setDeviceMetricsOverride', {
         width: vp.width,
         height: vp.height,
@@ -186,28 +270,59 @@ async function main() {
       await send('Page.navigate', { url: PAGE_URL })
       await new Promise((r) => setTimeout(r, 2000))
 
-      const res = await send('Runtime.evaluate', { expression: MEASURE, returnByValue: true })
-      const m = JSON.parse(res.result.value)
-
       const problems = []
-      if (m.docsOverflowX) problems.push('页面横向溢出')
-      if (m.panel?.innerScroll) {
-        problems.push(
-          `行动面板需要内部滚动（clientH=${m.panel.clientH} / scrollH=${m.panel.scrollH}）` +
-            ' —— 玩家看不到全部选项',
-        )
-      }
-      if (m.feed?.innerScroll) problems.push('日志区在初始状态就溢出（引导文字被裁掉）')
-      if (m.lastOptionBottom !== null && m.lastOptionBottom > vp.height) {
-        problems.push(`最后一个选项超出视口（底边 ${m.lastOptionBottom} > ${vp.height}）`)
+      let headline = ''
+      let m = {}
+
+      if (WANT_ENDING) {
+        const played = await send('Runtime.evaluate', {
+          expression: PLAY_TO_END,
+          awaitPromise: true,
+          returnByValue: true,
+        })
+        if (played.result.value !== 'ended') {
+          console.log(`❌ ${vp.label} (${vp.width}x${vp.height})  没走到结局（${played.result.value}）`)
+          failures++
+          continue
+        }
+        const res = await send('Runtime.evaluate', { expression: ENDING_MEASURE, returnByValue: true })
+        m = JSON.parse(res.result.value)
+        if (m.missing) {
+          problems.push('结算页没有渲染出来')
+        } else {
+          if (m.docsOverflowX) problems.push('页面横向溢出')
+          if (m.cardOverflowX) problems.push(`结算卡片横向溢出（宽 ${m.cardWidth}px 超出视口）`)
+          if (!m.topReachable) {
+            problems.push(
+              `滚到顶时结算卡片顶部仍被裁掉 ${Math.abs(m.topGap)}px` +
+                ' —— 这就是「flex 居中 + overflow-y」的经典坑（要用 margin: auto）',
+            )
+          }
+        }
+        headline =
+          `结算页：回顾 ${m.lineCount} 条，卡片高 ${m.cardHeight}px，` +
+          `整页可滚动 ${m.overlayScrollable ? '是' : '否'}`
+      } else {
+        const res = await send('Runtime.evaluate', { expression: MEASURE, returnByValue: true })
+        m = JSON.parse(res.result.value)
+        if (m.docsOverflowX) problems.push('页面横向溢出')
+        if (m.panel?.innerScroll) {
+          problems.push(
+            `行动面板需要内部滚动（clientH=${m.panel.clientH} / scrollH=${m.panel.scrollH}）` +
+              ' —— 玩家看不到全部选项',
+          )
+        }
+        if (m.feed?.innerScroll) problems.push('日志区在初始状态就溢出（引导文字被裁掉）')
+        if (m.lastOptionBottom !== null && m.lastOptionBottom > vp.height) {
+          problems.push(`最后一个选项超出视口（底边 ${m.lastOptionBottom} > ${vp.height}）`)
+        }
+        headline =
+          `选项 ${m.optionCount} 个 × ${m.optionHeight}px，` +
+          `面板 ${m.panel?.clientH}px，日志区 ${m.feed?.clientH}px`
       }
 
       const tag = problems.length === 0 ? '✅' : '❌'
-      console.log(
-        `${tag} ${vp.label} (${vp.width}x${vp.height})  ` +
-          `选项 ${m.optionCount} 个 × ${m.optionHeight}px，` +
-          `面板 ${m.panel?.clientH}px，日志区 ${m.feed?.clientH}px`,
-      )
+      console.log(`${tag} ${vp.label} (${vp.width}x${vp.height})  ${headline}`)
       for (const p of problems) console.log(`     ${p}`)
       failures += problems.length
 
@@ -216,7 +331,9 @@ async function main() {
           format: 'png',
           captureBeyondViewport: false,
         })
-        const file = `shots/${vp.width}x${vp.height}.png`
+        const file = WANT_ENDING
+          ? `shots/ending-${vp.width}x${vp.height}.png`
+          : `shots/${vp.width}x${vp.height}.png`
         writeFileSync(file, Buffer.from(shot.data, 'base64'))
         console.log(`     截图: ${file}`)
       }

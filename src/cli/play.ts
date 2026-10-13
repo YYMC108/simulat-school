@@ -269,16 +269,38 @@ async function main(): Promise<void> {
     }
 
     const ending = engine.getEnding()
-    const state = engine.getState()
+    const summary = engine.getSummary()
+    const rule = '─'.repeat(56)
+
     console.log('')
-    console.log('═'.repeat(52))
-    console.log(`🏁 结局：${ending?.title ?? '未知'}`)
-    console.log(ending?.text ?? '')
-    console.log('─'.repeat(52))
-    for (const key of STAT_ORDER) {
-      console.log(' ' + formatStat(key, state.stats[key]))
+    console.log('═'.repeat(56))
+    console.log(` ${summary.identity} · 本学期结算`)
+    console.log('═'.repeat(56))
+
+    if (summary.lines.length > 0) {
+      console.log('')
+      console.log(' 这 16 周里，你——')
+      console.log('')
+      for (const line of summary.lines) {
+        console.log(`   · ${line.text}`)
+      }
     }
-    console.log('═'.repeat(52))
+
+    console.log('')
+    console.log(rule)
+    for (const key of STAT_ORDER) {
+      console.log(' ' + formatStat(key, summary.stats[key]))
+    }
+    console.log(rule)
+
+    console.log('')
+    console.log(` ${summary.verdict}`)
+    console.log('')
+    console.log(` 🏁 ${ending?.title ?? '未知'}`)
+    console.log(`    ${ending?.text ?? ''}`)
+    console.log('')
+    console.log(` 种子 ${summary.seed} —— 同样的种子配上同样的选择，结果完全一致`)
+    console.log('═'.repeat(56))
   } finally {
     rl.close()
   }

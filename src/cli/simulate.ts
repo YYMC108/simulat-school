@@ -52,6 +52,8 @@ export interface SimOutcome {
   stats: Stats
   /** 本局触发过的事件 id —— 用于度量内容覆盖和跨局重复度 */
   seenEvents: string[]
+  /** 本局结算回顾的文案（渲染后，`{n}` 已替换）—— 用于检查回顾规则有没有死规则 */
+  summaryLines: string[]
 }
 
 /** 用指定决策风格跑一局。seed 固定则结果固定。 */
@@ -85,6 +87,7 @@ export function playOne(seed: number, weights: Record<string, number>): SimOutco
     // 去重：可重复事件每触发一次就往 seenEvents 里 push 一次，
     // 但我们关心的是「遇到哪些事件」，不是「触发了几次」
     seenEvents: [...new Set(engine.getState().seenEvents)],
+    summaryLines: engine.getSummary().lines.map((line) => line.text),
   }
 }
 
@@ -105,6 +108,11 @@ export interface ContentMetrics {
   repetition: number
   /** 平均每局遇到的不重复事件数 */
   avgDistinct: number
+  /**
+   * 结算回顾里实际出现过的文案。用来检查回顾规则有没有「死规则」
+   * （写了却永远触发不到，和死结局、死事件一个道理）。
+   */
+  summaryTexts: Set<string>
 }
 
 export interface SimReport {
@@ -131,6 +139,7 @@ export function simulate(gamesPerStrategy: number): SimReport {
   const eventCounts = new Map<string, number>()
   const seenPerGame: string[][] = []
   const gameStrategy: string[] = []
+  const summaryTexts = new Set<string>()
   let totalDistinct = 0
 
   for (const name of strategyNames) {
@@ -153,6 +162,7 @@ export function simulate(gamesPerStrategy: number): SimReport {
       for (const id of outcome.seenEvents) {
         eventCounts.set(id, (eventCounts.get(id) ?? 0) + 1)
       }
+      for (const text of outcome.summaryLines) summaryTexts.add(text)
     }
 
     statTotals.set(name, totals)
@@ -199,9 +209,26 @@ export function simulate(gamesPerStrategy: number): SimReport {
     hottestEventId,
     repetition: overlapPairs > 0 ? overlapSum / overlapPairs : 0,
     avgDistinct: totalGames > 0 ? totalDistinct / totalGames : 0,
+    summaryTexts,
   }
 
   return { gamesPerStrategy, strategyNames, counts, statTotals, triggered, deadEndings, content }
+}
+
+/**
+ * 结算回顾里「从来没被触发过的规则」—— 和死结局、死事件同一个道理。
+ *
+ * 规则的文案可能带 `{n}` 占位（渲染后变成具体数字，如「投出去了 3 份简历」），
+ * 所以匹配要用「前缀 + 后缀」而不是全等比较。
+ */
+export function deadSummaryRules(fired: Set<string>): { text: string }[] {
+  return GAME_DATA.summary.rules
+    .filter((rule) => {
+      const [prefix, suffix] = rule.text.split('{n}')
+      if (suffix === undefined) return !fired.has(rule.text)
+      return ![...fired].some((text) => text.startsWith(prefix!) && text.endsWith(suffix))
+    })
+    .map((rule) => ({ text: rule.text }))
 }
 
 /* ---------------- 中英文混排对齐（中文按 2 个字符宽度算） ---------------- */
@@ -284,6 +311,17 @@ function renderContentHealth(report: SimReport): void {
     console.log(`  死事件:                ⚠ 有 ${content.deadEvents.length} 个从未触发：`)
     for (const event of content.deadEvents) {
       console.log(`                             - ${event.title} (${event.id})`)
+    }
+  }
+
+  const totalRules = GAME_DATA.summary.rules.length
+  const deadRules = deadSummaryRules(content.summaryTexts)
+  if (deadRules.length === 0) {
+    console.log(`  结算回顾规则:          ✅ ${totalRules}/${totalRules} 条都被触发过`)
+  } else {
+    console.log(`  结算回顾规则:          ⚠ ${totalRules - deadRules.length}/${totalRules}，以下从未触发：`)
+    for (const rule of deadRules) {
+      console.log(`                             - ${rule.text}`)
     }
   }
 

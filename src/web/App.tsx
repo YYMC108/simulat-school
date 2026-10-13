@@ -63,6 +63,7 @@ export function App() {
         <EndingScreen
           ending={game.ending}
           state={game.state}
+          summary={game.summary}
           seed={game.seed}
           onRestart={game.restart}
         />

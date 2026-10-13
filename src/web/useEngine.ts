@@ -15,7 +15,14 @@ import { GAME_DATA } from '../data/index'
 import type { ChoiceView } from '../engine/engine'
 import { GameEngine } from '../engine/engine'
 import { randomSeed } from '../engine/rng'
-import type { ActionDef, Ending, GameEvent, GameState, LogEntry } from '../engine/types'
+import type {
+  ActionDef,
+  Ending,
+  GameEvent,
+  GameState,
+  LogEntry,
+  RunSummary,
+} from '../engine/types'
 
 /** 一次快照：UI 需要的全部只读数据 */
 interface Snapshot {
@@ -26,17 +33,21 @@ interface Snapshot {
   ending: Ending | null
   ended: boolean
   seed: number
+  /** 学期结算回顾。没走到结局时为 null —— 只在结局页需要，不必每步都算 */
+  summary: RunSummary | null
 }
 
 function takeSnapshot(engine: GameEngine): Snapshot {
+  const ended = engine.isEnded()
   return {
     state: engine.getState(),
     actions: engine.availableActions(),
     pending: engine.getPending(),
     choices: engine.getPendingChoices(),
     ending: engine.getEnding(),
-    ended: engine.isEnded(),
+    ended,
     seed: engine.getSeed(),
+    summary: ended ? engine.getSummary() : null,
   }
 }
 

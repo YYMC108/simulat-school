@@ -85,6 +85,14 @@ export type Condition =
   | { type: 'any'; conditions: Condition[] }
   /** 概率命中，如：30% 概率触发 */
   | { type: 'chance'; probability: number }
+  /**
+   * 本局是否遇到过某个事件（按事件 id）。
+   *
+   * 为什么需要它：结算是「回顾这一局」，而 62 个事件里有很多值得提一句、
+   * 却没有（也不该）单独设 flag 的——期中考试、体测、进实验室、开源 PR……
+   * 靠 `flag` 表达这些会给 flag 命名空间塞进一堆纯叙事的东西。
+   */
+  | { type: 'seenEvent'; id: string }
 
 /** 条件求值需要的全部上下文 */
 export interface EvalContext {
@@ -228,4 +236,88 @@ export interface GameData {
   actions: ActionDef[]
   events: GameEvent[]
   endings: Ending[]
+  /** 结算回顾的规则与文案（见 §7） */
+  summary: SummaryContent
+}
+
+/* ============================================================
+ * 7. 结算回顾：把 flag 和数字翻译成叙述
+ *
+ *    学期结束时给玩家一份「这 16 周你做了什么」，
+ *    而不是只丢一个结局标题过去。数字要能变成故事。
+ * ========================================================== */
+
+/** 回顾要点的分类 —— UI 用它分组、上色、配图标 */
+export type SummaryKind =
+  | 'club' // 社团
+  | 'academic' // 学业
+  | 'skill' // 技能 / 作品
+  | 'social' // 人际
+  | 'love' // 情感
+  | 'health' // 健康
+  | 'money' // 经济
+  | 'career' // 前途 / 求职
+  | 'setback' // 挫折
+  | 'notable' // 其他值得一提的
+
+/**
+ * 一条回顾规则：条件满足就产出一句叙述。
+ *
+ * 复用条件 DSL 而不是另写一套判断是刻意的 ——
+ * 「什么情况该说这句话」和「什么情况该触发那个事件」本来就是同一件事，
+ * 没必要有两套语义。所以在回顾规则里 `seenEvent` / `flag` / `stat` 全都能用。
+ *
+ * ⚠️ 规则里**不要用 `chance`**：回顾必须是确定的，
+ * 否则同一局结算两次可能给出不同说法（而且会消耗 RNG，影响复现）。
+ */
+export interface SummaryRule {
+  requires: Condition
+  /** 叙述文案；`{n}` 会被 countFrom 指定的数值 flag 替换 */
+  text: string
+  kind: SummaryKind
+  /** 取值来源：一个数值 flag 的 key，用于「投了 {n} 份简历」这种 */
+  countFrom?: string
+  /** 同一次结算内的排序，小的在前，默认 0 */
+  order?: number
+}
+
+export interface SummaryLine {
+  kind: SummaryKind
+  text: string
+}
+
+/**
+ * 学期结算回顾。**由引擎产出**，CLI 和 Web 渲染同一份。
+ *
+ * 为什么不交给 UI 自己算：
+ *  - 回顾要读 `flags` / `seenEvents` / `stats` 的全部语义，UI 拿不到
+ *  - 命令行和浏览器必须给出同一份回顾（同种子同结果）
+ *  - 这样它是**可测试的**：给一个状态，断言该出现哪几句
+ */
+export interface RunSummary {
+  /** 一句话身份，如「计算机专业大三学生」 */
+  identity: string
+  /** 叙述要点（已按 order 排好序） */
+  lines: SummaryLine[]
+  /** 终局属性 */
+  stats: Stats
+  endingTitle: string
+  /** 一句话总评，由**归一化后**最高的属性决定 */
+  verdict: string
+  seed: number
+}
+
+/** 结算回顾的内容（纯数据，由 data 层提供） */
+export interface SummaryContent {
+  /** 一句话身份 */
+  identity: string
+  rules: SummaryRule[]
+  /**
+   * 主导属性 → 一句话总评。
+   *
+   * 注意是「归一化后」最高：六项属性的量纲不同
+   * （金钱可以上万，其余是 0–100），直接比大小的话金钱永远第一。
+   * 所以比较的是 `值 / 该项上限`。
+   */
+  verdicts: Record<StatKey, string>
 }

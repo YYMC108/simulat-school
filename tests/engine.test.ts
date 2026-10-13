@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { simulate } from '../src/cli/simulate'
+import { deadSummaryRules, simulate } from '../src/cli/simulate'
 import { GAME_DATA } from '../src/data/index'
 import { GameEngine } from '../src/engine/engine'
 import { evaluate } from '../src/engine/conditions'
@@ -25,6 +25,19 @@ function chooseFirstEnabled(engine: GameEngine): void {
   const views = engine.getPendingChoices()
   const index = views.findIndex((view) => view.enabled)
   engine.choose(index === -1 ? 0 : index)
+}
+
+/**
+ * 一整轮完整模拟（6 种风格 × 120 局 = 720 局）的结果。
+ *
+ * 三个「死 XX」不变量（死结局 / 死事件 / 死规则）吃的都是同一份结果，
+ * 所以缓存起来只跑一次 —— 否则测试要跑 2160 局，时间白翻三倍。
+ * `simulate` 是种子确定的，缓存不影响正确性，也不会有 flaky。
+ */
+let fullReport: ReturnType<typeof simulate> | null = null
+function runFullSimulation(): ReturnType<typeof simulate> {
+  fullReport ??= simulate(120)
+  return fullReport
 }
 
 /* ============================================================
@@ -440,7 +453,7 @@ describe('内容数据合法性', () => {
    * 反过来，如果调整数值导致某个结局变得不可达，它会立刻告诉你。
    */
   it('所有结局都能被玩出来（没有死结局）', () => {
-    const report = simulate(120)
+    const report = runFullSimulation()
     expect(
       report.deadEndings.map((ending) => `${ending.title}(${ending.id})`),
       '以下结局在所有决策风格下都从未触发，检查它们的触发条件是否过严',
@@ -453,10 +466,23 @@ describe('内容数据合法性', () => {
    * 它只会平白占着权重、让别的本可以出现的事件更难出现。
    */
   it('所有随机事件都能被触发（没有死事件）', () => {
-    const report = simulate(120)
+    const report = runFullSimulation()
     expect(
       report.content.deadEvents.map((event) => `${event.title}(${event.id})`),
       '以下事件在所有决策风格下都从未触发，检查它们的触发条件是否过严（或状态触发事件的阈值是否根本达不到）',
+    ).toEqual([])
+  })
+
+  /**
+   * 第三个同构的不变量，对象换成结算回顾的规则。
+   * 一条写了却永远触发不到的回顾就是一段死文案 ——
+   * 玩家看不到它，而它却占着「本可以放别的话」的位置。
+   */
+  it('结算回顾的每条规则都可能被触发（没有死规则）', () => {
+    const report = runFullSimulation()
+    expect(
+      deadSummaryRules(report.content.summaryTexts).map((rule) => rule.text),
+      '以下回顾规则在所有决策风格下都从未触发，检查条件是否过严（尤其是属性阈值类规则）',
     ).toEqual([])
   })
 })

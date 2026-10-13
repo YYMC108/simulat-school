@@ -56,5 +56,8 @@ export function evaluate(condition: Condition | undefined, ctx: EvalContext): bo
 
     case 'chance':
       return ctx.rng() < condition.probability
+
+    case 'seenEvent':
+      return ctx.state.seenEvents.includes(condition.id)
   }
 }

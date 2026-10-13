@@ -1,7 +1,10 @@
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
+import { GAME_DATA } from '../src/data/index'
+import { GameEngine } from '../src/engine/engine'
 import { App } from '../src/web/App'
+import { EndingScreen } from '../src/web/components/EndingScreen'
 
 /**
  * Web 界面的冒烟测试。
@@ -70,5 +73,73 @@ describe('Web 界面首屏', () => {
     const view = text()
     expect(view).toContain('重开')
     expect(view).toContain('#')
+  })
+})
+
+/**
+ * 跑一局到结束（一路选第一个选项），拿到一个**真实**的终局引擎。
+ *
+ * 为什么不手搓一个假 state：结算页要展示的是「引擎产出的回顾」，
+ * 用假数据测就测不出「回顾文案能不能正确渲染出来」这件事本身。
+ */
+function playToEnd(seed: number): GameEngine {
+  const engine = new GameEngine(GAME_DATA, { seed })
+  let guard = 0
+  while (!engine.isEnded() && guard++ < 800) {
+    if (engine.getPending()) {
+      engine.choose(0)
+      continue
+    }
+    const actions = engine.availableActions()
+    if (actions.length === 0) break
+    engine.takeAction(actions[0]!.id)
+  }
+  return engine
+}
+
+describe('结算页', () => {
+  it('把引擎产出的每一条回顾都渲染出来', () => {
+    const engine = playToEnd(3)
+    const summary = engine.getSummary()
+    const ending = engine.getEnding()
+
+    expect(ending, '这一局应该走到某个结局').not.toBeNull()
+    // 先保证这个用例不是空转：如果一条回顾都没有，下面的循环等于没测
+    expect(summary.lines.length, '这一局应该至少产出一条回顾').toBeGreaterThan(0)
+
+    const view = renderToString(
+      <EndingScreen
+        ending={ending!}
+        state={engine.getState()}
+        summary={summary}
+        seed={engine.getSeed()}
+        onRestart={() => {}}
+      />,
+    )
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<[^>]*>/g, '')
+
+    for (const line of summary.lines) {
+      expect(view, `回顾「${line.text}」没有被渲染出来`).toContain(line.text)
+    }
+    expect(view).toContain(summary.verdict)
+    expect(view).toContain(ending!.title)
+    expect(view).toContain(summary.identity)
+  })
+
+  it('没有回顾数据时不崩，也不渲染空的要点列表', () => {
+    const engine = playToEnd(3)
+    const view = renderToString(
+      <EndingScreen
+        ending={engine.getEnding()!}
+        state={engine.getState()}
+        summary={null}
+        seed={engine.getSeed()}
+        onRestart={() => {}}
+      />,
+    ).replace(/<!--[\s\S]*?-->/g, '')
+
+    expect(view).not.toContain('ending-lines')
+    expect(view).toContain('最终属性')
   })
 })
