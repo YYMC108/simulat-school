@@ -7,7 +7,14 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { STRATEGIES, deadSummaryRules, isolateMajor, playOne, simulate } from '../src/cli/simulate'
 import type { MajorContent } from '../src/cli/simulate'
 import { auditFlags, auditFlagsOf, flagUsageOf } from '../src/cli/audit'
-import { GAME_DATA } from '../src/data/index'
+import {
+  GAME_DATA,
+  LITERATURE_ACTIONS,
+  LITERATURE_ENDINGS,
+  LITERATURE_EVENTS,
+  LITERATURE_PROJECTS,
+  LITERATURE_SUMMARY_RULES,
+} from '../src/data/index'
 import { GameEngine } from '../src/engine/engine'
 import { evaluate } from '../src/engine/conditions'
 import { STAT_ORDER, applyEffects } from '../src/engine/effects'
@@ -605,6 +612,119 @@ describe('内容数据合法性', () => {
     expect(
       deadActions,
       '以下「专业 + 行动」在所有决策风格下都从未出现在菜单上 —— 它的 requires 永远不满足',
+    ).toEqual([])
+  })
+})
+
+/* ============================================================
+ * 第八条不变量：标签纪律（专属内容必须带 majors）
+ *
+ * ── 为什么需要它 ──
+ * 「漏标 majors」有两个方向，而上面七条检查**只覆盖一个**：
+ *
+ *   · 漏标之后，如果这个条目**读了别的专业写不出的 flag**
+ *     → 静态审计（死 flag / 死规则）会报警。阶段 2 真抓到过两次
+ *       （两条计算机专属的回顾规则漏标，文科「读一个自己永远写不出来的 flag」）
+ *
+ *   · 漏标之后，如果它的**条件很通用**（只读 stat / week / money）
+ *     → 它只是变得**更可达**了。而死内容检查只查「不可达」→ **一声不响**。
+ *       后果是风味串台：文科学生拿到「技术宅的胜利」。
+ *
+ * 所以需要一个**正向**的约定来补这个方向：专属内容放进专属文件，
+ * 且那个文件里的每一条都带对应标签。这条机械可查、成本近零 ——
+ * 而漏标是静默的，值一个检查。
+ *
+ * 实测（2026-02，阶段 2.7）：`literature.ts` 的 25 个条目**全部合规**，
+ * 所以这条不变量不是「修 bug」，而是把一条已经 100% 遵守的人工约定
+ * **固化成机器强制** —— 否则它迟早会破。
+ * ========================================================== */
+
+describe('内容标签纪律（专属内容必须带 majors）', () => {
+  /** 只看标签，所以把各种内容洗成同一个形状 */
+  type Tagged = { id?: string; label?: string; text?: string; majors?: string[] }
+
+  const allContent: Tagged[] = [
+    ...GAME_DATA.actions,
+    ...GAME_DATA.events,
+    ...GAME_DATA.endings,
+    ...GAME_DATA.projects,
+    ...GAME_DATA.summary.rules,
+  ]
+
+  /** 内容没有 id 时给个人能认出来的名字 */
+  const nameOf = (item: Tagged): string => item.id ?? item.label ?? item.text?.slice(0, 16) ?? '(无名)'
+
+  it('专属文件里的每个条目都带对应专业的 majors 标签', () => {
+    const exclusiveFiles: Array<{ file: string; major: string; items: Tagged[] }> = [
+      {
+        file: 'literature.ts',
+        major: 'literature',
+        items: [
+          ...LITERATURE_ACTIONS,
+          ...LITERATURE_EVENTS,
+          ...LITERATURE_ENDINGS,
+          ...LITERATURE_PROJECTS,
+          ...LITERATURE_SUMMARY_RULES,
+        ],
+      },
+    ]
+
+    const missing: string[] = []
+    for (const group of exclusiveFiles) {
+      for (const item of group.items) {
+        if (!item.majors?.includes(group.major)) {
+          missing.push(
+            `${group.file}: ${nameOf(item)} 缺少 majors: ['${group.major}']（当前 ${JSON.stringify(item.majors)}）`,
+          )
+        }
+      }
+    }
+
+    expect(
+      missing,
+      '专属文件里的内容漏标 majors，就会被所有专业看见（条件通用时检查抓不到，只会风味串台）',
+    ).toEqual([])
+  })
+
+  it('id 带专属前缀的条目必须带对应标签（防止它被写进共享文件）', () => {
+    // 前缀约定：文科事件/结局用 ev_lit_ / ending_lit_
+    const prefixRules: Array<[RegExp, string]> = [
+      [/^ev_lit_/, 'literature'],
+      [/^ending_lit_/, 'literature'],
+    ]
+
+    const wrongFile: string[] = []
+    for (const item of allContent) {
+      if (!item.id) continue
+      for (const [pattern, major] of prefixRules) {
+        if (pattern.test(item.id) && !item.majors?.includes(major)) {
+          wrongFile.push(
+            `${item.id} 的 id 带专属前缀，却没有 majors: ['${major}'] ` +
+              '—— 多半是它被写进了共享文件（events.ts / endings.ts），而不是 literature.ts',
+          )
+        }
+      }
+    }
+
+    expect(wrongFile).toEqual([])
+  })
+
+  it('majors 里写的专业 id 必须真实存在（写错会让内容对所有人隐身）', () => {
+    const validIds = new Set(GAME_DATA.majors.map((major) => major.id))
+
+    const unknown: string[] = []
+    for (const item of allContent) {
+      for (const id of item.majors ?? []) {
+        if (!validIds.has(id)) {
+          unknown.push(`${nameOf(item)} 的 majors 里写了不存在的专业 '${id}'`)
+        }
+      }
+    }
+
+    expect(
+      unknown,
+      `已知专业只有：${[...validIds].join(' / ')}。写错一个字母，这条内容就对**所有**专业隐身` +
+        '（这种情况下死内容检查往往也会报，但报的是「不可达」，不如这条直指病因）',
     ).toEqual([])
   })
 })
