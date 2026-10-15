@@ -103,6 +103,14 @@ function applyEffect(ctx: EvalContext, effect: Effect, changes: Map<StatKey, Sta
     case 'end':
       state.endingId = effect.endingId
       break
+
+    default: {
+      // 穷尽性断言：给 `Effect` 加了新分支却忘了在这里实现时，**编译期**就会报错。
+      // 没有它，漏掉的分支会被**静默忽略** —— 策划写了效果，游戏里什么都没发生，
+      // 而且不报错、不报警，只能靠人肉发现。
+      const exhaustive: never = effect
+      throw new Error(`未处理的 Effect 分支: ${JSON.stringify(exhaustive)}`)
+    }
   }
 }
 

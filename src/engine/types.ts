@@ -170,7 +170,14 @@ export interface ActionDef {
   description: string
   /** 消耗的行动点 */
   cost: number
-  /** 可选条件（不满足则不出现在列表里） */
+  /**
+   * 可选条件（不满足则**不出现在列表里**）。
+   *
+   * ⚠️ **不要用 `chance`**：界面每次快照都会调 `availableActions()` 重新求值它，
+   * 于是「渲染了几次」就等于「多消耗了几个随机数」—— 同种子复现和存档都会坏掉。
+   * 概率请写进 `effects`（用 `if` + `chance`，或 `branch`）。
+   * 这条规矩有静态检查守着（`engine.test.ts`「渲染求值的 requires 不许用 chance」）。
+   */
   requires?: Condition
   effects: Effect[]
   /** 专属专业；不写 = 全专业共享 */
@@ -180,7 +187,12 @@ export interface ActionDef {
 /** 事件里的一个选项 */
 export interface Choice {
   label: string
-  /** 不满足条件时该选项变灰、不可点 */
+  /**
+   * 不满足条件时该选项变灰、不可点。
+   *
+   * ⚠️ **不要用 `chance`**：理由同 `ActionDef.requires` ——
+   * 界面每次快照都会调 `getPendingChoices()` 重新求值，渲染次数会变成随机数消耗次数。
+   */
   requires?: Condition
   effects: Effect[]
 }
@@ -241,7 +253,12 @@ export interface ProjectDef {
   description: string
   /** 专属专业；不写 = 全专业共享（当前数据里项目都是各专业专属） */
   majors?: MajorTags
-  /** 解锁条件（不满足则显示为「未解锁」） */
+  /**
+   * 解锁条件（不满足则显示为「未解锁」）。
+   *
+   * ⚠️ **不要用 `chance`**：界面每次快照都会调 `getProjects()` 重新求值，
+   * 于是「打开面板」这件事本身就会消耗随机数，破坏同种子复现。
+   */
   requires?: Condition
   /** 每次投入消耗的行动力，默认 1 */
   cost?: number

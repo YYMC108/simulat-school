@@ -20,7 +20,7 @@ import { evaluate } from '../src/engine/conditions'
 import { STAT_ORDER, applyEffects } from '../src/engine/effects'
 import { mulberry32 } from '../src/engine/rng'
 import { createInitialState } from '../src/engine/state'
-import type { EvalContext, GameData, GameState, MajorDef, StatKey } from '../src/engine/types'
+import type { Condition, EvalContext, GameData, GameState, MajorDef, StatKey } from '../src/engine/types'
 import { GOLDEN_FINGERPRINT } from './golden-fingerprint'
 
 /** 默认专业 id（不指定 majorId 时引擎用的就是它） */
@@ -725,6 +725,74 @@ describe('内容标签纪律（专属内容必须带 majors）', () => {
       unknown,
       `已知专业只有：${[...validIds].join(' / ')}。写错一个字母，这条内容就对**所有**专业隐身` +
         '（这种情况下死内容检查往往也会报，但报的是「不可达」，不如这条直指病因）',
+    ).toEqual([])
+  })
+})
+
+/* ============================================================
+ * 契约：会被界面**反复求值**的 requires 不许用 `chance`
+ *
+ * ── 为什么这是错的 ──
+ * `chance` 会消耗一次随机数（`conditions.ts` 的 `case 'chance'`）。
+ * 而界面每次快照都会调用这几个方法，它们内部都会 `evaluate(requires)`：
+ *
+ *   availableActions()  ← ActionDef.requires
+ *   getPendingChoices() ← Choice.requires
+ *   getProjects()       ← ProjectDef.requires
+ *   getSummary()        ← SummaryRule.requires
+ *
+ * 于是「渲染了几次」会变成「多消耗了几个随机数」——
+ * 同一颗种子，滚动一下窗口、切一下标签，随机流就变了：
+ * **同种子复现坏掉，存档也做不了**（存档需要「随机数消耗次数」是一个只由游戏进程决定的量）。
+ *
+ * ── 为什么之前只有一半有警告 ──
+ * 这条规矩原来只写在 `ProjectDef` 和 `SummaryRule` 上，
+ * 而 `ActionDef` / `Choice` 有一模一样的隐患却没有任何提示 —— 契约漏了一半。
+ * 现在类型注释和这条检查一起补上。
+ *
+ * 事件 / 结局的 `requires` **不在**此列：它们分别只在「每周抽取」和「结算一次」时求值，
+ * 不受渲染次数影响（但也别在那里用，概率一律写进 `effects` 更清楚）。
+ * ========================================================== */
+
+describe('契约：渲染求值的 requires 不许用 chance', () => {
+  /** 条件树里有没有 `chance`（递归，因为它可能藏在 not / all / any 里） */
+  const hasChance = (condition: Condition | undefined): boolean => {
+    if (!condition) return false
+    switch (condition.type) {
+      case 'chance':
+        return true
+      case 'not':
+        return hasChance(condition.condition)
+      case 'all':
+      case 'any':
+        return condition.conditions.some(hasChance)
+      default:
+        return false
+    }
+  }
+
+  it('行动 / 事件选项 / 项目 / 回顾规则的 requires 里都没有 chance', () => {
+    const offenders: string[] = []
+
+    for (const action of GAME_DATA.actions) {
+      if (hasChance(action.requires)) offenders.push(`行动 ${action.id}`)
+    }
+    for (const event of GAME_DATA.events) {
+      event.choices?.forEach((choice, index) => {
+        if (hasChance(choice.requires)) offenders.push(`事件 ${event.id} 的选项 #${index}`)
+      })
+    }
+    for (const project of GAME_DATA.projects) {
+      if (hasChance(project.requires)) offenders.push(`项目 ${project.id}`)
+    }
+    for (const rule of GAME_DATA.summary.rules) {
+      if (hasChance(rule.requires)) offenders.push(`回顾规则「${rule.text.slice(0, 12)}…」`)
+    }
+
+    expect(
+      offenders,
+      '以下 requires 会在界面每次渲染时被求值，用 chance 会让「渲染次数」消耗随机数，' +
+        '破坏同种子复现与存档 —— 概率请写进 effects（if + chance，或 branch）',
     ).toEqual([])
   })
 })

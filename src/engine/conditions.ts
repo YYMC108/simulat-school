@@ -59,5 +59,13 @@ export function evaluate(condition: Condition | undefined, ctx: EvalContext): bo
 
     case 'seenEvent':
       return ctx.state.seenEvents.includes(condition.id)
+
+    default: {
+      // 穷尽性断言：给 `Condition` 加了新分支却忘了在这里实现时，编译期就会报错。
+      // 没有它，漏掉的分支会**静默返回 undefined**（被当成 false）——
+      // 也就是「这个条件永远不成立」：内容永远触发不了，而没有任何提示。
+      const exhaustive: never = condition
+      throw new Error(`未处理的 Condition 分支: ${JSON.stringify(exhaustive)}`)
+    }
   }
 }
